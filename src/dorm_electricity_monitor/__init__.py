@@ -1,0 +1,1 @@
+"""Dorm electricity monitor package."""

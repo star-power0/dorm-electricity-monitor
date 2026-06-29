@@ -1,0 +1,36 @@
+{
+  "openId": "ofDET4ypS5bH***za_8CI",
+  "notifyChannel": "email",
+  "pushplusToken": "",
+  "email": {
+    "smtpHost": "smtp.qq.com",
+    "smtpPort": 465,
+    "sender": "your_qq_mail@qq.com",
+    "password": "your_smtp_authorization_code",
+    "recipients": [
+      "your_qq_mail@qq.com",
+      "backup_mail@example.com"
+    ],
+    "useSsl": true
+  },
+  "security": {
+    "adminPassword": "123456"
+  },
+  "checkIntervalMinutes": 30,
+  "warningThreshold": 10,
+  "criticalThreshold": 5,
+  "notifyOnRecovery": true,
+  "dailyHeartbeat": false,
+  "heartbeatTime": "22:00",
+  "remindEveryChecks": 3,
+  "meters": [
+    {
+      "name": "照明",
+      "type": 1
+    },
+    {
+      "name": "空调",
+      "type": 2
+    }
+  ]
+}

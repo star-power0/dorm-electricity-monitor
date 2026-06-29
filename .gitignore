@@ -1,0 +1,22 @@
+# Python runtime
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Local app data and secrets
+config.json
+state.json
+.backup/
+
+# Desktop build artifacts
+desktop/node_modules/
+desktop/dist/
+desktop/dist-electron/
+desktop/release/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
