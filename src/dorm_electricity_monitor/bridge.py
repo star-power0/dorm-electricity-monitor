@@ -6,9 +6,9 @@ import sys
 import traceback
 from typing import Any
 
-from .config import APP_NAME, DEFAULT_CONFIG_PATH, load_config, read_state
+from .config import DEFAULT_CONFIG_PATH, load_config, normalize_raw_config, now_text, read_state
 from .monitor import MonitorEngine
-from .notifier import MultiNotifier
+from .notifier import MultiNotifier, build_template_variables
 
 
 def _print_json(payload: dict[str, Any]) -> None:
@@ -17,11 +17,12 @@ def _print_json(payload: dict[str, Any]) -> None:
 
 
 def _load_raw_config(path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return normalize_raw_config(json.loads(path.read_text(encoding="utf-8")))
 
 
 def _save_raw_config(data: dict[str, Any], path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    normalized = normalize_raw_config(data)
+    path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
     load_config(path)
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -60,10 +61,7 @@ def _command_save_config() -> dict[str, Any]:
 def _command_send_test_mail() -> dict[str, Any]:
     config = load_config()
     notifier = MultiNotifier(config)
-    notifier.send(
-        f"{APP_NAME}测试邮件",
-        "这是一封来自 Electron 桌面程序的测试邮件。\n\n如果你能收到，说明通知链路正常。",
-    )
+    notifier.send_template("test", build_template_variables(config, {"time": now_text()}))
     return {"sent": True, "channel": config.notify_channel}
 
 

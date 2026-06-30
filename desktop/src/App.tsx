@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
-import type { Level, MeterState, MonitorState, RawConfig, RuntimeInfo } from './types'
+import type { EmailTemplateKey, Level, MeterState, MonitorState, RawConfig, RuntimeInfo } from './types'
 
 const navItems = [
   { key: 'dashboard', label: '总览', eyebrow: 'Overview' },
@@ -8,7 +8,57 @@ const navItems = [
   { key: 'settings', label: '设置', eyebrow: 'Settings' },
 ] as const
 
+const templateItems: Array<{ key: EmailTemplateKey; label: string; hint: string }> = [
+  { key: 'test', label: '测试邮件', hint: '点击顶部“测试邮件”时发送' },
+  { key: 'warning', label: '余额偏低提醒', hint: '余额低于普通阈值时发送' },
+  { key: 'critical', label: '余额告急提醒', hint: '余额低于强提醒阈值时发送' },
+  { key: 'recovery', label: '恢复正常提醒', hint: '余额恢复安全范围时发送' },
+  { key: 'failure', label: '查询失败提醒', hint: '连续 3 次查询失败时发送' },
+]
+
+const defaultEmailTemplates: RawConfig['emailTemplates'] = {
+  test: {
+    subject: '[{appName}] 测试邮件 {time}',
+    body: '这是一封来自 {appName} 的测试邮件。\n\n发送时间：{time}\n通知通道：{channel}\n当前收件人：{recipients}\n\n如果你能收到这封邮件，说明当前通知链路可用。',
+  },
+  warning: {
+    subject: '[{appName}] {meterName} 余额偏低：{balance} 元',
+    body: '{roomLabel}\n\n当前余额 {balance} 元，已经低于普通提醒阈值 {warningThreshold} 元。\n本轮请 {rotationAssignee} 交费。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}',
+  },
+  critical: {
+    subject: '[{appName}] {meterName} 余额告急：{balance} 元',
+    body: '{roomLabel}\n\n当前余额只剩 {balance} 元，已经低于强提醒阈值 {criticalThreshold} 元。\n本轮请 {rotationAssignee} 立刻交费。\n\n请尽快充值，避免临时断电。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}',
+  },
+  recovery: {
+    subject: '[{appName}] {meterName} 已恢复正常',
+    body: '{roomLabel}\n\n当前余额 {balance} 元，已经回到安全范围。\n本轮 {rotationAssignee} 已完成交费，下一次会轮到下一位。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}',
+  },
+  failure: {
+    subject: '[{appName}] 连续查询失败提醒',
+    body: '{appName} 已连续 {failureCount} 次查询失败。\n\n错误信息：{error}\n发生时间：{time}\n\n请检查电脑网络、接口状态或配置文件。',
+  },
+}
+
+const previewVariables: Record<string, string> = {
+  appName: '宿舍电费监控',
+  channel: 'email',
+  recipients: 'REDACTED_RECIPIENT@qq.com',
+  meterName: '空调',
+  roomLabel: '5号楼 516 室 · 空调',
+  buildingLabel: '5号楼 空调',
+  balance: '4.82',
+  energy: '8.16',
+  collectedAt: '2026-06-29 20:30:00',
+  warningThreshold: '10.00',
+  criticalThreshold: '5.00',
+  level: 'critical',
+  time: '2026-06-29 20:30:00',
+  failureCount: '3',
+  error: '网络连接超时',
+}
+
 type PageKey = (typeof navItems)[number]['key']
+type NotifyTab = 'recipients' | 'templates'
 
 type Toast = {
   type: 'success' | 'error' | 'info'
@@ -32,6 +82,11 @@ function App() {
   const [recipientDraft, setRecipientDraft] = useState('')
   const [settingsUnlocked, setSettingsUnlocked] = useState(false)
   const [unlockPassword, setUnlockPassword] = useState('')
+  const [templateUnlocked, setTemplateUnlocked] = useState(false)
+  const [templatePassword, setTemplatePassword] = useState('')
+  const [notifyTab, setNotifyTab] = useState<NotifyTab>('recipients')
+  const [rotationDraft, setRotationDraft] = useState('')
+  const [activeTemplate, setActiveTemplate] = useState<EmailTemplateKey>('test')
 
   useEffect(() => {
     void bootstrap()
@@ -47,8 +102,29 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [toast])
 
-  const meters = useMemo(() => Object.values(state?.meters || {}), [state])
+  const meters = useMemo(
+    () => Object.entries(state?.meters || {}).map(([key, m]) => ({ ...m, key })),
+    [state],
+  )
   const status = useMemo(() => getOverallStatus(state), [state])
+  const meterAssignees = useMemo(() => {
+    const members = config?.rotationMembers?.length ? config.rotationMembers : ['A', 'B', 'C', 'D']
+    return Object.fromEntries(
+      Object.entries(state?.rotationState || {}).map(([k, rs]) => [
+        k,
+        members[(rs.activeAssignee ?? 0) % members.length],
+      ]),
+    )
+  }, [state, config])
+  const rotationSummary = useMemo(() => {
+    const members = config?.rotationMembers?.length ? config.rotationMembers : ['A', 'B', 'C', 'D']
+    return Object.entries(state?.rotationState || {}).map(([key, rs]) => ({
+      key,
+      label: state?.meters?.[key]?.name ?? key,
+      assignee: members[(rs.activeAssignee ?? 0) % members.length],
+      armed: rs.armed ?? false,
+    }))
+  }, [state, config])
   const pageTitle = navItems.find((item) => item.key === page)?.label || '总览'
 
   async function bootstrap() {
@@ -56,6 +132,7 @@ function App() {
       const data = await window.monitorApi.bootstrap()
       setState(data.state)
       setConfig(normalizeConfig(data.config))
+      setRotationDraft((data.config.rotationMembers || []).join(', '))
       setRuntime(data.runtime)
     } catch (error) {
       showError(error)
@@ -90,6 +167,22 @@ function App() {
     }
   }
 
+  async function saveRecipients() {
+    await saveConfig()
+  }
+
+  async function saveTemplates() {
+    await saveConfig()
+    setTemplateUnlocked(false)
+    setTemplatePassword('')
+  }
+
+  async function saveSettings() {
+    await saveConfig()
+    setSettingsUnlocked(false)
+    setUnlockPassword('')
+  }
+
   async function sendTestMail() {
     try {
       await window.monitorApi.sendTestMail()
@@ -120,6 +213,33 @@ function App() {
     setConfig({ ...config, email: { ...config.email, ...patch } })
   }
 
+  function updateRotationMembers(value: string) {
+    if (!config) return
+    const members = value.split(',').map((item) => item.trim()).filter(Boolean)
+    setRotationDraft(value)
+    setConfig({ ...config, rotationMembers: members })
+  }
+
+  function updateTemplate(key: EmailTemplateKey, patch: Partial<RawConfig['emailTemplates'][EmailTemplateKey]>) {
+    if (!config) return
+    setConfig({
+      ...config,
+      emailTemplates: {
+        ...config.emailTemplates,
+        [key]: {
+          ...config.emailTemplates[key],
+          ...patch,
+        },
+      },
+    })
+  }
+
+  function restoreTemplate(key: EmailTemplateKey) {
+    if (!config) return
+    setConfig({ ...config, emailTemplates: { ...config.emailTemplates, [key]: defaultEmailTemplates[key] } })
+    setToast({ type: 'info', text: '已恢复当前模板默认内容，保存后生效。' })
+  }
+
   function addRecipient() {
     if (!config) return
     const mail = recipientDraft.trim()
@@ -144,6 +264,17 @@ function App() {
       setSettingsUnlocked(true)
       setUnlockPassword('')
       setToast({ type: 'success', text: '敏感设置已解锁。' })
+      return
+    }
+    setToast({ type: 'error', text: '应用密码不正确。' })
+  }
+
+  function unlockTemplates() {
+    if (!config) return
+    if (templatePassword === config.security.adminPassword) {
+      setTemplateUnlocked(true)
+      setTemplatePassword('')
+      setToast({ type: 'success', text: '邮件模板已解锁。' })
       return
     }
     setToast({ type: 'error', text: '应用密码不正确。' })
@@ -197,7 +328,7 @@ function App() {
           </div>
         </header>
 
-        {page === 'dashboard' && <Dashboard state={state} meters={meters} runtime={runtime} status={status} />}
+        {page === 'dashboard' && <Dashboard state={state} meters={meters} runtime={runtime} status={status} meterAssignees={meterAssignees} />}
         {page === 'notify' && config && (
           <NotifyPage
             config={config}
@@ -206,8 +337,21 @@ function App() {
             setRecipientDraft={setRecipientDraft}
             addRecipient={addRecipient}
             removeRecipient={removeRecipient}
-            save={() => saveConfig()}
+            save={notifyTab === 'templates' ? saveTemplates : saveRecipients}
             saving={saving}
+            notifyTab={notifyTab}
+            setNotifyTab={setNotifyTab}
+            templateUnlocked={templateUnlocked}
+            templatePassword={templatePassword}
+            setTemplatePassword={setTemplatePassword}
+            unlockTemplates={unlockTemplates}
+            activeTemplate={activeTemplate}
+            setActiveTemplate={setActiveTemplate}
+            updateTemplate={updateTemplate}
+            restoreTemplate={restoreTemplate}
+            rotationDraft={rotationDraft}
+            setRotationDraft={updateRotationMembers}
+            rotationSummary={rotationSummary}
           />
         )}
         {page === 'settings' && config && (
@@ -216,7 +360,7 @@ function App() {
             runtime={runtime}
             updateConfig={updateConfig}
             updateEmail={updateEmail}
-            save={() => saveConfig()}
+            save={saveSettings}
             saving={saving}
             settingsUnlocked={settingsUnlocked}
             unlockPassword={unlockPassword}
@@ -232,7 +376,7 @@ function App() {
   )
 }
 
-function Dashboard({ state, meters, runtime, status }: { state: MonitorState | null; meters: MeterState[]; runtime: RuntimeInfo | null; status: ReturnType<typeof getOverallStatus> }) {
+function Dashboard({ state, meters, runtime, status, meterAssignees }: { state: MonitorState | null; meters: (MeterState & { key: string })[]; runtime: RuntimeInfo | null; status: ReturnType<typeof getOverallStatus>; meterAssignees: Record<string, string> }) {
   const totalBalance = meters.reduce((sum, meter) => sum + Number(meter.balance || 0), 0)
   return (
     <div className="dashboard-grid">
@@ -265,7 +409,7 @@ function Dashboard({ state, meters, runtime, status }: { state: MonitorState | n
           <span className="section-note">最近成功 {state?.lastSuccessAt || '--'}</span>
         </div>
         <div className="meter-grid">
-          {meters.map((meter) => <MeterCard key={meter.name} meter={meter} />)}
+          {meters.map((meter) => <MeterCard key={meter.key} meter={meter} assignee={meterAssignees[meter.key]} />)}
           {!meters.length && <div className="empty-card">暂无余额数据，点击立即查询刷新。</div>}
         </div>
       </section>
@@ -291,7 +435,7 @@ function Dashboard({ state, meters, runtime, status }: { state: MonitorState | n
   )
 }
 
-function MeterCard({ meter }: { meter: MeterState }) {
+function MeterCard({ meter, assignee }: { meter: MeterState; assignee?: string }) {
   return (
     <article className={`meter-card ${meter.level}`}>
       <div className="meter-topline">
@@ -304,6 +448,7 @@ function MeterCard({ meter }: { meter: MeterState }) {
       </div>
       <div className="meter-footer">
         <span>剩余电量 {Number(meter.energy || 0).toFixed(2)} 度</span>
+        {assignee && <span className="meter-assignee">本轮：{assignee}</span>}
         <span>采集 {meter.collectedAt || '--'}</span>
       </div>
     </article>
@@ -319,49 +464,167 @@ type NotifyPageProps = {
   removeRecipient: (mail: string) => void
   save: () => void
   saving: boolean
+  notifyTab: NotifyTab
+  setNotifyTab: (tab: NotifyTab) => void
+  templateUnlocked: boolean
+  templatePassword: string
+  setTemplatePassword: (value: string) => void
+  unlockTemplates: () => void
+  activeTemplate: EmailTemplateKey
+  setActiveTemplate: (key: EmailTemplateKey) => void
+  updateTemplate: (key: EmailTemplateKey, patch: Partial<RawConfig['emailTemplates'][EmailTemplateKey]>) => void
+  restoreTemplate: (key: EmailTemplateKey) => void
+  rotationDraft: string
+  setRotationDraft: (value: string) => void
+  rotationSummary: Array<{ key: string; label: string; assignee: string; armed: boolean }>
 }
 
 function NotifyPage(props: NotifyPageProps) {
   const recipients = normalizeRecipients(props.config.email.recipients)
-  return (
-    <div className="stack-page narrow">
-      <section className="card split-card">
-        <div>
-          <p className="eyebrow">Channel</p>
-          <h3>通知通道</h3>
-          <p className="muted">当前使用 {props.config.notifyChannel === 'email' ? '邮箱提醒' : 'PushPlus'}，提醒规则仍由 Python 核心逻辑判断。</p>
-        </div>
-        <select
-          value={props.config.notifyChannel}
-          onChange={(event) => props.setConfig({ ...props.config, notifyChannel: event.target.value })}
-        >
-          <option value="email">Email</option>
-          <option value="pushplus">PushPlus</option>
-        </select>
-      </section>
+  const activeItem = templateItems.find((item) => item.key === props.activeTemplate) || templateItems[0]
+  const template = props.config.emailTemplates[props.activeTemplate]
+  const subjectPreview = renderTemplatePreview(template.subject)
+  const bodyPreview = renderTemplatePreview(template.body)
 
-      <section className="card">
-        <div className="section-title">
-          <div>
-            <p className="eyebrow">Recipients</p>
-            <h3>收件人</h3>
+  return (
+    <div className="stack-page notify-page">
+      <div className="page-tabs">
+        <button className={props.notifyTab === 'recipients' ? 'active' : ''} type="button" onClick={() => props.setNotifyTab('recipients')}>收件人</button>
+        <button className={props.notifyTab === 'templates' ? 'active' : ''} type="button" onClick={() => props.setNotifyTab('templates')}>邮件模板</button>
+      </div>
+
+      {props.notifyTab === 'recipients' && (
+        <div className="notify-grid">
+          <div className="notify-column">
+            <section className="card split-card notify-channel-card">
+              <div>
+                <p className="eyebrow">Channel</p>
+                <h3>通知通道</h3>
+                <p className="muted">当前使用 {props.config.notifyChannel === 'email' ? '邮箱提醒' : 'PushPlus'}，提醒规则由 Python 核心逻辑判断。</p>
+              </div>
+              <select
+                value={props.config.notifyChannel}
+                onChange={(event) => props.setConfig({ ...props.config, notifyChannel: event.target.value })}
+              >
+                <option value="email">Email</option>
+                <option value="pushplus">PushPlus</option>
+              </select>
+            </section>
+
+            <section className="card notify-card">
+              <div className="section-title">
+                <div>
+                  <p className="eyebrow">Recipients</p>
+                  <h3>收件人</h3>
+                </div>
+                <button type="button" onClick={props.save} disabled={props.saving}>{props.saving ? '保存中…' : '保存收件人'}</button>
+              </div>
+              <div className="recipient-row compact-row">
+                <input value={props.recipientDraft} onChange={(event) => props.setRecipientDraft(event.target.value)} placeholder="输入邮箱地址" />
+                <button type="button" onClick={props.addRecipient}>添加</button>
+              </div>
+              <div className="recipient-list scroll-panel">
+                {recipients.map((mail) => (
+                  <div className="recipient-item" key={mail}>
+                    <span>{mail}</span>
+                    <button className="ghost" type="button" onClick={() => props.removeRecipient(mail)}>删除</button>
+                  </div>
+                ))}
+                {!recipients.length && <p className="muted">还没有收件人。</p>}
+              </div>
+            </section>
           </div>
-          <button type="button" onClick={props.save} disabled={props.saving}>{props.saving ? '保存中…' : '保存收件人'}</button>
-        </div>
-        <div className="recipient-row">
-          <input value={props.recipientDraft} onChange={(event) => props.setRecipientDraft(event.target.value)} placeholder="输入邮箱地址" />
-          <button type="button" onClick={props.addRecipient}>添加</button>
-        </div>
-        <div className="recipient-list">
-          {recipients.map((mail) => (
-            <div className="recipient-item" key={mail}>
-              <span>{mail}</span>
-              <button className="ghost" type="button" onClick={() => props.removeRecipient(mail)}>删除</button>
+
+          <section className="card notify-card rotation-card">
+            <div className="section-title">
+              <div>
+                <p className="eyebrow">Rotation</p>
+                <h3>轮值名单</h3>
+              </div>
+              <button type="button" onClick={props.save} disabled={props.saving}>{props.saving ? '保存中…' : '保存轮值'}</button>
             </div>
-          ))}
-          {!recipients.length && <p className="muted">还没有收件人。</p>}
+            <div className="recipient-row compact-row">
+              <input value={props.rotationDraft} onChange={(event) => props.setRotationDraft(event.target.value)} placeholder="A, B, C, D" />
+            </div>
+            <p className="muted">可直接填写真人名字；这里只决定邮件里写谁处理，不影响群发收件人。</p>
+            <div className="recipient-list scroll-panel">
+              {props.rotationSummary.map((item) => (
+                <div className="recipient-item rotation-item" key={item.key}>
+                  <div>
+                    <strong>{item.label}</strong>
+                    <p className="muted">当前轮到 {item.assignee}</p>
+                  </div>
+                  <small className={`rotation-flag ${item.armed ? 'armed' : ''}`}>{item.armed ? '本轮告警处理中' : '等待下一轮告警'}</small>
+                </div>
+              ))}
+              {!props.rotationSummary.length && <p className="muted">暂无轮值状态，先执行一次查询。</p>}
+            </div>
+          </section>
         </div>
-      </section>
+      )}
+
+      {props.notifyTab === 'templates' && !props.templateUnlocked && (
+        <section className="card template-lock-card">
+          <div>
+            <p className="eyebrow">Locked</p>
+            <h3>解锁邮件模板</h3>
+            <p className="muted">邮件主题和正文会直接影响正式提醒内容，需要应用密码解锁后编辑。</p>
+          </div>
+          <div className="unlock-row">
+            <input type="password" value={props.templatePassword} onChange={(event) => props.setTemplatePassword(event.target.value)} placeholder="应用密码" />
+            <button type="button" onClick={props.unlockTemplates}>解锁</button>
+          </div>
+        </section>
+      )}
+
+      {props.notifyTab === 'templates' && props.templateUnlocked && (
+        <section className="template-layout">
+          <aside className="template-list card">
+            <p className="eyebrow">Templates</p>
+            <h3>邮件类型</h3>
+            <div className="template-buttons">
+              {templateItems.map((item) => (
+                <button
+                  className={props.activeTemplate === item.key ? 'active' : ''}
+                  key={item.key}
+                  type="button"
+                  onClick={() => props.setActiveTemplate(item.key)}
+                >
+                  <span>{item.label}</span>
+                  <small>{item.hint}</small>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section className="card template-editor">
+            <div className="section-title">
+              <div>
+                <p className="eyebrow">Editor</p>
+                <h3>{activeItem.label}</h3>
+                <p className="muted">支持用花括号插入变量，例如 {'{balance}'}、{'{time}'}。</p>
+              </div>
+              <div className="template-actions">
+                <button className="secondary" type="button" onClick={() => props.restoreTemplate(props.activeTemplate)}>恢复默认</button>
+                <button type="button" onClick={() => { void props.save(); props.setTemplatePassword(''); }} disabled={props.saving}>{props.saving ? '保存中…' : '保存模板'}</button>
+              </div>
+            </div>
+
+            <div className="template-workbench">
+              <div className="template-form">
+                <TextField label="邮件主题" value={template.subject} onChange={(value) => props.updateTemplate(props.activeTemplate, { subject: value })} />
+                <TextAreaField label="邮件正文" value={template.body} onChange={(value) => props.updateTemplate(props.activeTemplate, { body: value })} />
+              </div>
+
+              <div className="template-preview">
+                <p className="eyebrow">Preview</p>
+                <h4>{subjectPreview}</h4>
+                <pre>{bodyPreview}</pre>
+              </div>
+            </div>
+          </section>
+        </section>
+      )}
     </div>
   )
 }
@@ -420,7 +683,7 @@ function SettingsPage(props: {
           <TextField label="SMTP 授权码" type="password" value={props.config.email.password} disabled={!props.settingsUnlocked} onChange={(value) => props.updateEmail({ password: value })} />
         </div>
         <div className="save-row">
-          <button type="button" onClick={props.save} disabled={props.saving}>{props.saving ? '保存中…' : '保存配置'}</button>
+          <button type="button" onClick={() => { void props.save(); props.setUnlockPassword(''); }} disabled={props.saving}>{props.saving ? '保存中…' : '保存配置'}</button>
         </div>
       </section>
     </div>
@@ -439,6 +702,10 @@ function TextField({ label, value, onChange, disabled, type = 'text' }: { label:
   return <label className="field"><span>{label}</span><input type={type} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>
 }
 
+function TextAreaField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
+  return <label className="field"><span>{label}</span><textarea value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>
+}
+
 function getOverallStatus(state: MonitorState | null) {
   if (!state) return { level: 'idle', label: '等待', title: '读取本地状态', detail: '应用正在读取本地状态。' }
   if (state.lastError) return { level: 'critical', label: '失败', title: '查询失败', detail: state.lastError.split('\n')[0] }
@@ -455,7 +722,15 @@ function normalizeRecipients(value: RawConfig['email']['recipients']) {
 }
 
 function normalizeConfig(config: RawConfig) {
-  return { ...config, email: { ...config.email, recipients: normalizeRecipients(config.email.recipients) } }
+  return {
+    ...config,
+    email: { ...config.email, recipients: normalizeRecipients(config.email.recipients) },
+    emailTemplates: { ...defaultEmailTemplates, ...(config.emailTemplates || {}) },
+  }
+}
+
+function renderTemplatePreview(template: string) {
+  return template.replace(/\{([A-Za-z][A-Za-z0-9]*)\}/g, (match, key: string) => previewVariables[key] || match)
 }
 
 export default App

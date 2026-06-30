@@ -39,13 +39,13 @@
 
 ## 安装
 
-先创建 Python 环境：
+一键初始化 Python 环境和桌面端依赖：
 
 ```bat
 scripts\setup.bat
 ```
 
-再安装桌面端依赖：
+如果你只想单独安装桌面端依赖：
 
 ```bat
 cd desktop
@@ -95,16 +95,23 @@ npm install
 
 ## 启动
 
-开发模式启动桌面端：
+推荐开发入口：
 
 ```bat
 scripts\run_desktop_dev.bat
 ```
 
-或直接：
+兼容入口（等价转发到上面的脚本）：
 
 ```bat
 scripts\run.bat
+```
+
+桌面目录内直接启动：
+
+```bat
+cd desktop
+npm start
 ```
 
 调试 Python 桥接：
@@ -128,6 +135,13 @@ scripts\test_email.bat
 scripts\build_desktop.bat
 ```
 
+或在桌面目录内直接执行：
+
+```bat
+cd desktop
+npm run dist
+```
+
 构建产物默认输出到：
 
 ```text
@@ -148,10 +162,10 @@ desktop\release
 - Python bridge `check-once` 正常
 - Python bridge `bootstrap` 正常
 - 已重建最小 `.venv`，仅保留 `requests` 及其必要依赖
-- Electron 打包产物已重新生成
 - 启动阶段已改为先显示本地历史状态，再延迟后台联网查询
 - 前端构建产物已切换为相对资源路径
 - Electron 主进程/preload 已改为 `.cts` 源文件并编译为 `.cjs` 入口，避免打包后 ESM 加载异常导致黑屏
+- 启动入口已增加 `desktop/scripts/start-electron.cjs`，会主动清除全局 `ELECTRON_RUN_AS_NODE` 污染
 - 已补应用图标与托盘图标资源链路
 
 ## 说明

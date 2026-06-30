@@ -13,6 +13,34 @@
     ],
     "useSsl": true
   },
+  "emailTemplates": {
+    "test": {
+      "subject": "[{appName}] 测试邮件 {time}",
+      "body": "这是一封来自 {appName} 的测试邮件。\n\n发送时间：{time}\n通知通道：{channel}\n当前收件人：{recipients}\n\n如果你能收到这封邮件，说明当前通知链路可用。"
+    },
+    "warning": {
+      "subject": "[{appName}] {meterName} 余额偏低：{balance} 元",
+      "body": "{roomLabel}\n\n当前余额 {balance} 元，已经低于普通提醒阈值 {warningThreshold} 元。\n本轮请 {rotationAssignee} 交费。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}"
+    },
+    "critical": {
+      "subject": "[{appName}] {meterName} 余额告急：{balance} 元",
+      "body": "{roomLabel}\n\n当前余额只剩 {balance} 元，已经低于强提醒阈值 {criticalThreshold} 元。\n本轮请 {rotationAssignee} 立刻交费。\n\n请尽快充值，避免临时断电。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}"
+    },
+    "recovery": {
+      "subject": "[{appName}] {meterName} 已恢复正常",
+      "body": "{roomLabel}\n\n当前余额 {balance} 元，已经回到安全范围。\n本轮 {rotationAssignee} 已完成交费，下一次会轮到下一位。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}"
+    },
+    "failure": {
+      "subject": "[{appName}] 连续查询失败提醒",
+      "body": "{appName} 已连续 {failureCount} 次查询失败。\n\n错误信息：{error}\n发生时间：{time}\n\n请检查电脑网络、接口状态或配置文件。"
+    }
+  },
+  "rotationMembers": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
   "security": {
     "adminPassword": "123456"
   },

@@ -1,17 +1,15 @@
 {
   "name": "dorm-electricity-monitor-desktop",
   "private": true,
-  "version": "0.1.0",
-  "description": "Electron desktop shell for dorm electricity monitoring.",
-  "author": "Claude Code",
   "type": "module",
+  "version": "0.1.0",
   "main": "dist-electron/main/index.cjs",
   "scripts": {
     "dev": "concurrently \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite --host 127.0.0.1",
-    "dev:electron": "wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 tsc -p tsconfig.electron.json && electron .",
+    "dev:electron": "wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 tsc -p tsconfig.electron.json && node scripts/start-electron.cjs .",
     "build": "node -e \"require('fs').rmSync('dist-electron',{recursive:true,force:true})\" && tsc -b && tsc -p tsconfig.electron.json && vite build",
-    "start": "electron .",
+    "start": "node scripts/start-electron.cjs .",
     "dist": "npm run build && electron-builder",
     "lint": "oxlint",
     "preview": "vite preview"
@@ -30,7 +28,6 @@
     "electron": "^39.2.7",
     "electron-builder": "^26.1.0",
     "oxlint": "^1.69.0",
-    "png-to-ico": "^3.0.1",
     "typescript": "~6.0.2",
     "vite": "^8.1.0",
     "wait-on": "^9.0.3"

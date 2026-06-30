@@ -1,6 +1,17 @@
 # CHANGELOG
 
+## 2026-06-30
+
+- 整理项目结构：删除临时 Electron 探针文件、旧 release 产物与历史备份目录，收紧仓库内非源码内容。
+- 精简桌面端依赖：移除未再使用的 `png-to-ico` 开发包。
+- 统一启动文档：保留 `scripts\run_desktop_dev.bat` 为推荐入口，`scripts\run.bat` 改为兼容转发壳，并同步更新 README 的安装、启动、打包说明。
+
 ## 2026-06-29
+
+- 修复桌面端构建链路：将 Vite 配置切到 ESM 文件 `vite.config.mts`，并让 Electron TypeScript 编译同时覆盖 `.mts` / `.cts` 入口，恢复 `npm run build` 所需的模块解析一致性。
+- 新增宿舍电费轮值前端展示：总览页电表卡片显示当前轮值人，通知页轮值卡片显示照明/空调各自独立的当前轮转状态。
+- 调整默认邮件模板文案，明确写出“本轮请 {rotationAssignee} 交费 / 立刻交费”，恢复提醒改为提示本轮已完成且下次轮到下一位。
+- 同步更新 `config.json` 与 `config.example.json` 默认模板内容，避免界面默认值、示例配置与 Python 后端文案不一致。
 
 - 新增 `src/dorm_electricity_monitor/bridge.py`，为 Electron 提供 `get-state`、`check-once`、`get-config`、`save-config`、`send-test-mail` 桥接命令。
 - 调整 `src/dorm_electricity_monitor/config.py`，支持通过 `DORM_MONITOR_APP_DIR` 覆盖配置与状态目录，便于桌面壳统一管理运行目录。
@@ -12,6 +23,7 @@
 - 删除旧 `.venv` 并按最小依赖重建运行时，清掉旧桌面栈历史污染。
 - 修复 Electron 打包后前端资源绝对路径导致的黑屏问题。
 - 修复 Electron 主进程/preload 被 ESM 方式加载导致的黑屏问题，改为 `.cts` 编译输出 `.cjs`，并让打包入口指向 `dist-electron/main/index.cjs`。
+- 新增 `desktop/scripts/start-electron.cjs`，启动前主动清除全局 `ELECTRON_RUN_AS_NODE` 污染，避免 `npm start` / `dev:electron` 被错误降级成 Node 模式。
 - 新增应用图标与托盘图标打包资源，修复默认图标与托盘白块问题。
 - 更新 `README.md`，补充 Electron 架构、启动方式、桥接命令与打包说明。
 - 清理旧 PyInstaller spec、Python `__pycache__` 与未使用的 Vite 模板资源。
@@ -23,7 +35,10 @@
 
 - 再次优化总览页布局，改为 12 栅格信息流：状态摘要与运行指标同排、电表占主区域、最近记录改为底部侧卡，减少大面积空白并压缩卡片尺寸。
 
-- 按用户反馈继续压缩总览与设置页：电表改为上下排列，最近记录改为卡片内部滚动，设置页移除重复启动区并压缩表单高度，尽量避免整页滚动。
+- 新增邮件模板配置与编辑能力，测试邮件、普通提醒、强提醒、恢复提醒和故障提醒统一走模板渲染。
+- 桌面端通知页改为页内标签布局，支持收件人与邮件模板分开管理。
+- 邮件模板页增加应用密码解锁、模板列表、双栏编辑区、变量提示和预览。
+- `config.example.json` 补充默认模板示例，方便直接修改文案。
 
 ## 2026-06-28
 

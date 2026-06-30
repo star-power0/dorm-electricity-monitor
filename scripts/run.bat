@@ -1,9 +1,3 @@
 @echo off
 setlocal
-cd /d "%~dp0\..\desktop"
-
-if not exist "node_modules" (
-  call npm install
-)
-
-call npm run dev
+call "%~dp0run_desktop_dev.bat"

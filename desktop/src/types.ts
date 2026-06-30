@@ -1,5 +1,12 @@
 export type Level = 'normal' | 'warning' | 'critical'
 
+export type EmailTemplateKey = 'test' | 'warning' | 'critical' | 'recovery' | 'failure'
+
+export type EmailTemplate = {
+  subject: string
+  body: string
+}
+
 export type MeterState = {
   name: string
   roomLabel?: string
@@ -10,6 +17,12 @@ export type MeterState = {
   level: Level
 }
 
+export type RotationState = {
+  cursor?: number
+  activeAssignee?: number
+  armed?: boolean
+}
+
 export type MonitorState = {
   lastCheckAt?: string | null
   lastSuccessAt?: string | null
@@ -17,6 +30,7 @@ export type MonitorState = {
   failureCount?: number
   meters?: Record<string, MeterState>
   alerts?: Record<string, unknown>
+  rotationState?: Record<string, RotationState>
   logs?: string[]
   lastHeartbeatDate?: string | null
 }
@@ -33,6 +47,8 @@ export type RawConfig = {
     recipients: string[] | string
     useSsl: boolean
   }
+  emailTemplates: Record<EmailTemplateKey, EmailTemplate>
+  rotationMembers: string[]
   security: {
     adminPassword: string
   }

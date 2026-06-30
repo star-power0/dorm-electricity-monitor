@@ -6,7 +6,7 @@ import traceback
 
 from .config import AppConfig, now_text, read_state, write_state
 from .electricity import ElectricityClient, MeterReading
-from .notifier import MultiNotifier
+from .notifier import MultiNotifier, build_template_variables, build_variables_for_meter
 
 StatusCallback = Callable[[dict], None]
 
@@ -19,37 +19,21 @@ def level_for_balance(balance: float, warning: float, critical: float) -> str:
     return "normal"
 
 
-def title_for_level(level: str) -> str:
-    if level == "critical":
-        return "宿舍电费余额告急"
-    if level == "warning":
-        return "宿舍电费余额偏低"
-    return "宿舍电费监控恢复正常"
+def rotation_state_for(state: dict, meter_key: str) -> dict:
+    rotation_state = state.setdefault("rotationState", {})
+    current = rotation_state.get(meter_key)
+    if not isinstance(current, dict):
+        current = {"cursor": 0, "activeAssignee": 0, "armed": False}
+        rotation_state[meter_key] = current
+    current.setdefault("cursor", 0)
+    current.setdefault("activeAssignee", 0)
+    current.setdefault("armed", False)
+    return current
 
 
-def message_for_reading(reading: MeterReading, level: str, config: AppConfig) -> str:
-    if level == "critical":
-        return (
-            f"{reading.room_label}\n\n"
-            f"当前余额只剩 {reading.balance:.2f} 元，已经低于 {config.critical_threshold:g} 元。\n"
-            "请尽快充值，避免临时断电。\n\n"
-            f"剩余电量：{reading.energy:.2f} 度\n"
-            f"采集时间：{reading.collected_at}"
-        )
-    if level == "warning":
-        return (
-            f"{reading.room_label}\n\n"
-            f"当前余额 {reading.balance:.2f} 元，已经低于 {config.warning_threshold:g} 元。\n"
-            "建议今天顺手充一下。\n\n"
-            f"剩余电量：{reading.energy:.2f} 度\n"
-            f"采集时间：{reading.collected_at}"
-        )
-    return (
-        f"{reading.room_label}\n\n"
-        f"当前余额 {reading.balance:.2f} 元，已经回到安全范围。\n"
-        f"剩余电量：{reading.energy:.2f} 度\n"
-        f"采集时间：{reading.collected_at}"
-    )
+def rotation_member_for(config: AppConfig, cursor: int) -> str:
+    members = config.rotation_members or ["A", "B", "C", "D"]
+    return members[cursor % len(members)] if members else ""
 
 
 class MonitorEngine:
@@ -62,6 +46,7 @@ class MonitorEngine:
     def check_once(self) -> dict:
         state = read_state()
         state.setdefault("logs", [])
+        state.setdefault("rotationState", {})
         state["lastCheckAt"] = now_text()
         notifications_sent: list[str] = []
         try:
@@ -85,9 +70,16 @@ class MonitorEngine:
             state["lastError"] = f"{exc}\n{traceback.format_exc(limit=3)}"
             self._append_log(state, f"{now_text()} 查询失败：{exc}")
             if state["failureCount"] == 3:
-                self.notifier.send(
-                    "电费监控暂时查不到余额",
-                    "已经连续 3 次查询失败。请检查电脑网络、接口状态或配置文件。",
+                self.notifier.send_template(
+                    "failure",
+                    build_template_variables(
+                        self.config,
+                        {
+                            "failureCount": state["failureCount"],
+                            "error": exc,
+                            "time": now_text(),
+                        },
+                    ),
                 )
         write_state(state)
         if self.callback:
@@ -113,6 +105,7 @@ class MonitorEngine:
     def _handle_alert(self, state: dict, reading: MeterReading) -> str | None:
         key = str(reading.type)
         previous = state.setdefault("alerts", {}).get(key, {})
+        rotation = rotation_state_for(state, key)
         previous_level = previous.get("level", "normal")
         previous_count = int(previous.get("repeatCount", 0) or 0)
         level = level_for_balance(
@@ -130,22 +123,37 @@ class MonitorEngine:
                 should_notify = True
                 action_text = f"{reading.name} 已恢复正常，发送恢复提醒"
             repeat_count = 0
+            if rotation.get("armed"):
+                rotation["armed"] = False
+                rotation["cursor"] = int(rotation.get("cursor", 0) or 0) + 1
+                rotation["activeAssignee"] = rotation["cursor"]
         else:
-            if level != previous_level:
+            if not rotation.get("armed"):
+                rotation["armed"] = True
+                rotation["activeAssignee"] = int(rotation.get("cursor", 0) or 0)
                 should_notify = True
-                repeat_count = 1
                 action_text = f"{reading.name} 进入{self._level_cn(level)}，已发送提醒"
             else:
+                should_notify = True
+                action_text = f"{reading.name} 持续{self._level_cn(level)}，第 {previous_count + 1} 次检查再次提醒"
                 repeat_count = previous_count + 1
                 if repeat_count >= self.config.remind_every_checks:
-                    should_notify = True
-                    action_text = f"{reading.name} 持续{self._level_cn(level)}，第 {repeat_count} 次检查再次提醒"
                     repeat_count = 0
-                else:
-                    action_text = f"{reading.name} 仍为{self._level_cn(level)}，本次未重复发送"
 
+        assignee = rotation_member_for(self.config, int(rotation.get("activeAssignee", 0) or 0))
+        payload = build_variables_for_meter(
+            self.config,
+            reading,
+            level,
+            {
+                "time": now_text(),
+                "rotationAssignee": assignee,
+                "rotationCursor": int(rotation.get("cursor", 0) or 0),
+            },
+        )
         if should_notify:
-            self.notifier.send(title_for_level(level), message_for_reading(reading, level, self.config))
+            template_key = "recovery" if level == "normal" else level
+            self.notifier.send_template(template_key, payload)
 
         state["alerts"][key] = {
             "level": level,
@@ -177,7 +185,8 @@ class MonitorEngine:
     def _build_success_log(self, readings: list[MeterReading], notifications_sent: list[str]) -> str:
         summary = "；".join([f"{reading.name} {reading.balance:.2f} 元" for reading in readings])
         if notifications_sent:
-            return f"{now_text()} 查询成功：{summary}。{"；".join(notifications_sent)}"
+            notes = "；".join(notifications_sent)
+            return f"{now_text()} 查询成功：{summary}。{notes}"
         return f"{now_text()} 查询成功：{summary}。未触发提醒。"
 
     def _level_cn(self, level: str) -> str:
