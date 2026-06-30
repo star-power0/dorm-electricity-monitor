@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage } from 'electron'
+import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import path = require('node:path')
 import fs = require('node:fs')
@@ -257,6 +257,10 @@ function registerIpc() {
     packaged: app.isPackaged,
     configExists: fs.existsSync(path.join(dataRoot, 'config.json')),
   }))
+  ipcMain.handle('monitor:open-external', async (_event: unknown, url: string) => {
+    await shell.openExternal(url)
+    return true
+  })
 }
 
 app.whenReady().then(() => {

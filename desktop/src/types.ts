@@ -60,6 +60,9 @@ export type RawConfig = {
   heartbeatTime: string
   remindEveryChecks: number
   meters: Array<{ name: string; type: number }>
+  onboardingCompleted: boolean
+  privacyConsentVersion: string
+  privacyConsentedAt: string
 }
 
 export type RuntimeInfo = {
@@ -87,6 +90,7 @@ export type MonitorApi = {
   sendTestMail: () => Promise<{ sent: boolean; channel: string }>
   setAutostart: (enabled: boolean) => Promise<{ openAtLogin: boolean }>
   getRuntimeInfo: () => Promise<RuntimeInfo>
+  openExternal: (url: string) => Promise<boolean>
   onStateUpdated: (listener: (state: MonitorState) => void) => () => void
 }
 

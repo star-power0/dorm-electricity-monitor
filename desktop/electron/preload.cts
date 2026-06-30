@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('monitorApi', {
   sendTestMail: () => ipcRenderer.invoke('monitor:send-test-mail'),
   setAutostart: (enabled: boolean) => ipcRenderer.invoke('monitor:set-autostart', enabled),
   getRuntimeInfo: () => ipcRenderer.invoke('monitor:get-runtime-info'),
+  openExternal: (url: string) => ipcRenderer.invoke('monitor:open-external', url),
   onStateUpdated: (listener: (state: unknown) => void) => {
     const handler = (_event: unknown, state: unknown) => listener(state)
     ipcRenderer.on('monitor:state-updated', handler)

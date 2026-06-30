@@ -17,4 +17,4 @@ if not exist "desktop\node_modules" (
 )
 
 echo Setup completed.
-echo Edit config.json and run scripts\run_desktop_dev.bat.
+echo Edit config.json and run scripts\run_desktop_dev.bat or use scripts\run.bat.

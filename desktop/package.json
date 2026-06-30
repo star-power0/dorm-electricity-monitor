@@ -1,6 +1,9 @@
 {
   "name": "dorm-electricity-monitor-desktop",
   "private": true,
+  "description": "Electron desktop shell for the dorm electricity monitor.",
+  "author": "star-power0",
+  "license": "MIT",
   "type": "module",
   "version": "0.1.0",
   "main": "dist-electron/main/index.cjs",

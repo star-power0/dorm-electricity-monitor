@@ -163,6 +163,9 @@ def normalize_raw_config(data: dict[str, Any]) -> dict[str, Any]:
     normalized = copy.deepcopy(data)
     normalized["emailTemplates"] = normalize_email_templates(normalized.get("emailTemplates"))
     normalized["rotationMembers"] = normalize_rotation_members(normalized.get("rotationMembers"))
+    normalized["onboardingCompleted"] = bool(normalized.get("onboardingCompleted", False))
+    normalized["privacyConsentVersion"] = str(normalized.get("privacyConsentVersion", "")).strip()
+    normalized["privacyConsentedAt"] = str(normalized.get("privacyConsentedAt", "")).strip()
     return normalized
 
 

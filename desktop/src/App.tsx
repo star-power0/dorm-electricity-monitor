@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import type { EmailTemplateKey, Level, MeterState, MonitorState, RawConfig, RuntimeInfo } from './types'
 
@@ -57,10 +57,16 @@ const previewVariables: Record<string, string> = {
   error: '网络连接超时',
 }
 
+const privacyConsentVersion = '2026-06-30'
+const openIdPreview = 'ofDET4ypS5bH***za_8CI'
+const smtpHelpLink = 'https://service.mail.qq.com/detail/0/75'
+
 type PageKey = (typeof navItems)[number]['key']
 type NotifyTab = 'recipients' | 'templates'
+type SettingsTab = 'runtime' | 'sensitive'
 
 type Toast = {
+  id: number
   type: 'success' | 'error' | 'info'
   text: string
 }
@@ -79,28 +85,45 @@ function App() {
   const [checking, setChecking] = useState(false)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
+  const toastTimerRef = useRef<number | null>(null)
   const [recipientDraft, setRecipientDraft] = useState('')
   const [settingsUnlocked, setSettingsUnlocked] = useState(false)
   const [unlockPassword, setUnlockPassword] = useState('')
   const [templateUnlocked, setTemplateUnlocked] = useState(false)
   const [templatePassword, setTemplatePassword] = useState('')
   const [notifyTab, setNotifyTab] = useState<NotifyTab>('recipients')
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('runtime')
   const [rotationDraft, setRotationDraft] = useState('')
   const [activeTemplate, setActiveTemplate] = useState<EmailTemplateKey>('test')
+  const [privacyVisible, setPrivacyVisible] = useState(false)
+  const [privacyChecked, setPrivacyChecked] = useState(false)
+  const [onboardingVisible, setOnboardingVisible] = useState(false)
+  const [onboardingStep, setOnboardingStep] = useState(0)
 
   useEffect(() => {
     void bootstrap()
     const dispose = window.monitorApi.onStateUpdated((nextState) => {
       setState(nextState)
     })
-    return dispose
+    return () => {
+      dispose()
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current)
+      }
+    }
   }, [])
 
-  useEffect(() => {
-    if (!toast) return
-    const timer = window.setTimeout(() => setToast(null), 3200)
-    return () => window.clearTimeout(timer)
-  }, [toast])
+  function showToast(nextToast: Omit<Toast, 'id'>) {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current)
+    }
+    const toastWithId = { ...nextToast, id: Date.now() }
+    setToast(toastWithId)
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast((current) => (current?.id === toastWithId.id ? null : current))
+      toastTimerRef.current = null
+    }, 3200)
+  }
 
   const meters = useMemo(
     () => Object.entries(state?.meters || {}).map(([key, m]) => ({ ...m, key })),
@@ -131,9 +154,13 @@ function App() {
     try {
       const data = await window.monitorApi.bootstrap()
       setState(data.state)
-      setConfig(normalizeConfig(data.config))
-      setRotationDraft((data.config.rotationMembers || []).join(', '))
+      const normalizedConfig = normalizeConfig(data.config)
+      setConfig(normalizedConfig)
+      setRotationDraft((normalizedConfig.rotationMembers || []).join(', '))
       setRuntime(data.runtime)
+      setPrivacyVisible(!normalizedConfig.privacyConsentedAt)
+      setOnboardingVisible(Boolean(normalizedConfig.privacyConsentedAt) && !normalizedConfig.onboardingCompleted)
+      setOnboardingStep(0)
     } catch (error) {
       showError(error)
     }
@@ -144,7 +171,7 @@ function App() {
     try {
       const nextState = await window.monitorApi.checkOnce()
       setState(nextState)
-      setToast({ type: 'success', text: '查询完成，状态已刷新。' })
+      showToast({ type: 'success', text: '查询完成，状态已刷新。' })
     } catch (error) {
       showError(error)
     } finally {
@@ -159,7 +186,7 @@ function App() {
       const saved = await window.monitorApi.saveConfig(nextConfig)
       setConfig(normalizeConfig(saved))
       setRuntime(await window.monitorApi.getRuntimeInfo())
-      setToast({ type: 'success', text: '配置已保存，并已更新后台定时任务。' })
+      showToast({ type: 'success', text: '配置已保存，并已更新后台定时任务。' })
     } catch (error) {
       showError(error)
     } finally {
@@ -183,10 +210,87 @@ function App() {
     setUnlockPassword('')
   }
 
+  async function acceptPrivacy() {
+    if (!config) return
+    if (!privacyChecked) {
+      showToast({ type: 'error', text: '请先勾选确认框，再继续。' })
+      return
+    }
+    const nextConfig = {
+      ...config,
+      privacyConsentVersion,
+      privacyConsentedAt: new Date().toISOString(),
+    }
+    setConfig(normalizeConfig(nextConfig))
+    setPrivacyVisible(false)
+    setOnboardingStep(0)
+    setOnboardingVisible(true)
+    void saveConfig(nextConfig)
+  }
+
+  async function completeOnboarding() {
+    if (!config) return
+    if (!config.openId.trim()) {
+      showToast({ type: 'error', text: '请先填写 openId，再完成首次引导。' })
+      closeOverlaysAndGo('settings')
+      return
+    }
+    if (config.notifyChannel === 'email') {
+      const recipients = normalizeRecipients(config.email.recipients)
+      if (!config.email.sender.trim() || !config.email.password.trim() || !recipients.length) {
+        showToast({ type: 'error', text: '邮箱提醒模式下，请先补齐发件邮箱、SMTP 授权码和至少一个收件人。' })
+        closeOverlaysAndGo('settings')
+        return
+      }
+    }
+    const nextConfig = {
+      ...config,
+      onboardingCompleted: true,
+      privacyConsentVersion,
+      privacyConsentedAt: config.privacyConsentedAt || new Date().toISOString(),
+    }
+    setConfig(normalizeConfig(nextConfig))
+    setOnboardingVisible(false)
+    setOnboardingStep(0)
+    setPage('dashboard')
+    showToast({ type: 'success', text: '首次引导已完成，后续可在设置页继续修改参数。' })
+    void saveConfig(nextConfig)
+  }
+
+  function closeOverlaysAndGo(nextPage: PageKey, nextStep = 0) {
+    setPrivacyVisible(false)
+    setOnboardingVisible(false)
+    setOnboardingStep(nextStep)
+    if (nextPage === 'settings') {
+      setSettingsTab(nextStep === 0 ? 'runtime' : 'sensitive')
+    }
+    setPage(nextPage)
+  }
+
+  function openPrivacy() {
+    setOnboardingVisible(false)
+    setPrivacyChecked(Boolean(config?.privacyConsentedAt))
+    setPrivacyVisible(true)
+  }
+
+  function openOnboarding(startStep = 0) {
+    setPrivacyVisible(false)
+    setOnboardingStep(startStep)
+    setOnboardingVisible(true)
+  }
+
+  function openSmtpHelp() {
+    void window.monitorApi.openExternal(smtpHelpLink)
+  }
+
+  function reopenOnboarding() {
+    openOnboarding(0)
+  }
+
   async function sendTestMail() {
     try {
       await window.monitorApi.sendTestMail()
-      setToast({ type: 'success', text: '测试邮件已发送。' })
+      showToast({ type: 'success', text: '测试邮件已发送。' })
     } catch (error) {
       showError(error)
     }
@@ -197,7 +301,7 @@ function App() {
       const autostart = await window.monitorApi.setAutostart(enabled)
       const nextRuntime = await window.monitorApi.getRuntimeInfo()
       setRuntime({ ...nextRuntime, autostart })
-      setToast({ type: 'success', text: enabled ? '已设置开机自启动。' : '已关闭开机自启动。' })
+      showToast({ type: 'success', text: enabled ? '已设置开机自启动。' : '已关闭开机自启动。' })
     } catch (error) {
       showError(error)
     }
@@ -237,7 +341,7 @@ function App() {
   function restoreTemplate(key: EmailTemplateKey) {
     if (!config) return
     setConfig({ ...config, emailTemplates: { ...config.emailTemplates, [key]: defaultEmailTemplates[key] } })
-    setToast({ type: 'info', text: '已恢复当前模板默认内容，保存后生效。' })
+    showToast({ type: 'info', text: '已恢复当前模板默认内容，保存后生效。' })
   }
 
   function addRecipient() {
@@ -263,10 +367,10 @@ function App() {
     if (unlockPassword === config.security.adminPassword) {
       setSettingsUnlocked(true)
       setUnlockPassword('')
-      setToast({ type: 'success', text: '敏感设置已解锁。' })
+      showToast({ type: 'success', text: '敏感设置已解锁。' })
       return
     }
-    setToast({ type: 'error', text: '应用密码不正确。' })
+    showToast({ type: 'error', text: '应用密码不正确。' })
   }
 
   function unlockTemplates() {
@@ -274,18 +378,40 @@ function App() {
     if (templatePassword === config.security.adminPassword) {
       setTemplateUnlocked(true)
       setTemplatePassword('')
-      setToast({ type: 'success', text: '邮件模板已解锁。' })
+      showToast({ type: 'success', text: '邮件模板已解锁。' })
       return
     }
-    setToast({ type: 'error', text: '应用密码不正确。' })
+    showToast({ type: 'error', text: '应用密码不正确。' })
   }
 
   function showError(error: unknown) {
-    setToast({ type: 'error', text: error instanceof Error ? error.message : String(error) })
+    showToast({ type: 'error', text: error instanceof Error ? error.message : String(error) })
   }
 
   return (
     <main className="app-shell">
+      {privacyVisible && config && (
+        <PrivacyOverlay
+          checked={privacyChecked}
+          setChecked={setPrivacyChecked}
+          acceptPrivacy={() => void acceptPrivacy()}
+          closeOverlay={() => setPrivacyVisible(false)}
+          initialConsent={Boolean(config.privacyConsentedAt)}
+        />
+      )}
+      {onboardingVisible && config && (
+        <OnboardingOverlay
+          config={config}
+          step={onboardingStep}
+          setStep={setOnboardingStep}
+          completeOnboarding={() => void completeOnboarding()}
+          closeOverlay={() => setOnboardingVisible(false)}
+          goSettings={() => closeOverlaysAndGo('settings', 1)}
+          goNotify={() => closeOverlaysAndGo('notify', 2)}
+          openPrivacy={openPrivacy}
+          openSmtpHelp={openSmtpHelp}
+        />
+      )}
       <aside className="sidebar">
         <div className="brand-block">
           <div className="brand-mark">电</div>
@@ -323,6 +449,8 @@ function App() {
             <h2>{page === 'dashboard' ? status.title : pageTitle}</h2>
           </div>
           <div className="top-actions">
+            <button className="secondary" type="button" onClick={openPrivacy}>隐私说明</button>
+            <button className="secondary" type="button" onClick={reopenOnboarding}>首次引导</button>
             <button className="secondary" type="button" onClick={sendTestMail}>测试邮件</button>
             <button type="button" onClick={runCheck} disabled={checking}>{checking ? '查询中…' : '立即查询'}</button>
           </div>
@@ -367,11 +495,23 @@ function App() {
             setUnlockPassword={setUnlockPassword}
             unlockSettings={unlockSettings}
             toggleAutostart={toggleAutostart}
+            settingsTab={settingsTab}
+            setSettingsTab={setSettingsTab}
+            openSmtpHelp={openSmtpHelp}
           />
         )}
       </section>
 
-      {toast && <div className={`toast ${toast.type}`}>{toast.text}</div>}
+      {toast && (
+        <div
+          className={`toast ${toast.type}`}
+          key={toast.id}
+          onAnimationEnd={() => setToast((current) => (current?.id === toast.id ? null : current))}
+        >
+          <span>{toast.text}</span>
+          <button className="toast-close" type="button" onClick={() => setToast(null)}>×</button>
+        </div>
+      )}
     </main>
   )
 }
@@ -422,7 +562,7 @@ function Dashboard({ state, meters, runtime, status, meterAssignees }: { state: 
           </div>
         </div>
         <div className="timeline">
-          {(state?.logs || []).slice(0, 5).map((line, index) => (
+          {(state?.logs || []).map((line, index) => (
             <div className="timeline-item" key={`${line}-${index}`}>
               <span></span>
               <p>{line}</p>
@@ -436,20 +576,24 @@ function Dashboard({ state, meters, runtime, status, meterAssignees }: { state: 
 }
 
 function MeterCard({ meter, assignee }: { meter: MeterState; assignee?: string }) {
+  const location = getMeterLocation(meter)
+
   return (
     <article className={`meter-card ${meter.level}`}>
-      <div className="meter-topline">
-        <span>{meter.roomLabel || meter.name}</span>
-        <strong>{levelText[meter.level]}</strong>
-      </div>
-      <div className="meter-main">
-        <h3>{meter.name}</h3>
-        <div className="balance"><strong>{Number(meter.balance || 0).toFixed(2)}</strong><small>元</small></div>
-      </div>
-      <div className="meter-footer">
-        <span>剩余电量 {Number(meter.energy || 0).toFixed(2)} 度</span>
-        {assignee && <span className="meter-assignee">本轮：{assignee}</span>}
-        <span>采集 {meter.collectedAt || '--'}</span>
+      <div className="meter-card-body">
+        <div className="meter-copy">
+          {location && <span className="meter-location">{location}</span>}
+          <h3>{meter.name}</h3>
+          <div className="meter-meta">
+            <span>剩余电量 {Number(meter.energy || 0).toFixed(2)} 度</span>
+            {assignee && <span className="meter-assignee">本轮：{assignee}</span>}
+          </div>
+        </div>
+        <div className="meter-side">
+          <strong className="meter-level">{levelText[meter.level]}</strong>
+          <div className="balance"><strong>{Number(meter.balance || 0).toFixed(2)}</strong><small>元</small></div>
+          <span className="meter-time">采集 {meter.collectedAt || '--'}</span>
+        </div>
       </div>
     </article>
   )
@@ -629,6 +773,142 @@ function NotifyPage(props: NotifyPageProps) {
   )
 }
 
+function PrivacyOverlay(props: {
+  checked: boolean
+  setChecked: (value: boolean) => void
+  acceptPrivacy: () => void
+  closeOverlay: () => void
+  initialConsent: boolean
+}) {
+  return (
+    <div className="onboarding-backdrop">
+      <section className="onboarding-panel onboarding-panel-narrow">
+        <div className="section-title compact">
+          <div>
+            <p className="eyebrow">Privacy</p>
+            <h3>隐私与使用边界</h3>
+          </div>
+          {props.initialConsent && (
+            <button className="ghost" type="button" onClick={props.closeOverlay}>稍后再看</button>
+          )}
+        </div>
+        <div className="stack-page">
+          <article className="card onboarding-card">
+            <h3>在进入软件前，请确认以下使用边界</h3>
+            <ul className="bullet-list muted">
+              <li>本工具是本地桌面辅助程序，不是学校或微信小程序的官方服务。</li>
+              <li>当前版本只支持用户本人已经在小程序中绑定的单宿舍电表，不提供全校扫描、他人宿舍查询或批量枚举能力。</li>
+              <li>openId、发件邮箱、SMTP 授权码、收件人和本地查询状态默认只保存在当前电脑的配置目录中。</li>
+              <li>邮箱提醒依赖你自行开启 SMTP 服务并提供授权码；SMTP 授权码不是邮箱登录密码，请不要公开提交。</li>
+              <li>学校接口、小程序参数和邮箱服务策略可能变化，余额数据以官方缴费平台实际显示为准。</li>
+            </ul>
+            <label className="consent-row consent-box">
+              <input type="checkbox" checked={props.checked} onChange={(event) => props.setChecked(event.target.checked)} />
+              <span>我已阅读并理解上述隐私、数据保存方式与使用边界。</span>
+            </label>
+          </article>
+          <div className="inline-actions onboarding-footer">
+            <button type="button" disabled={!props.checked} onClick={props.acceptPrivacy}>
+              我已阅读并同意，继续进入引导
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function OnboardingOverlay(props: {
+  config: RawConfig
+  step: number
+  setStep: (value: number) => void
+  completeOnboarding: () => void
+  closeOverlay: () => void
+  goSettings: () => void
+  goNotify: () => void
+  openPrivacy: () => void
+  openSmtpHelp: () => void
+}) {
+  const isLastStep = props.step === 2
+  return (
+    <div className="onboarding-backdrop">
+      <section className="onboarding-panel onboarding-panel-narrow">
+        <div className="section-title compact">
+          <div>
+            <p className="eyebrow">Welcome</p>
+            <h3>首次启动引导</h3>
+            <p className="muted">步骤 {props.step + 1} / 3</p>
+          </div>
+          <button className="ghost" type="button" onClick={props.closeOverlay}>稍后再看</button>
+        </div>
+
+        <div className="step-dots" aria-hidden="true">
+          {[0, 1, 2].map((step) => <span key={step} className={step === props.step ? 'active' : ''}></span>)}
+        </div>
+
+        {props.step === 0 && (
+          <article className="card onboarding-card">
+            <p className="eyebrow">Step 1</p>
+            <h3>获取并填写 openId</h3>
+            <p className="muted">openId 是小程序接口里识别当前微信用户与已绑定宿舍关系的参数，通常是一串较长的字母数字，例如：</p>
+            <code className="inline-code">{openIdPreview}</code>
+            <ul className="bullet-list muted">
+              <li>安装 Reqable 并信任 HTTPS 证书。</li>
+              <li>打开小程序后点一次照明和空调查询。</li>
+              <li>在请求里找到 `openId`，填到敏感配置。</li>
+            </ul>
+            <div className="inline-actions onboarding-footer">
+              <button className="secondary" type="button" onClick={props.openPrivacy}>返回隐私说明</button>
+              <button type="button" onClick={props.goSettings}>去敏感配置填写</button>
+              <button type="button" onClick={() => props.setStep(1)}>下一步</button>
+            </div>
+          </article>
+        )}
+
+        {props.step === 1 && (
+          <article className="card onboarding-card">
+            <p className="eyebrow">Step 2</p>
+            <h3>配置邮箱 SMTP 授权码</h3>
+            <p className="muted">SMTP 是邮箱提供给第三方客户端发送邮件的协议。本工具填写的是“授权码”，不是邮箱登录密码。</p>
+            <ul className="bullet-list muted">
+              <li>登录 QQ 邮箱，开启 SMTP 或 IMAP/SMTP 服务。</li>
+              <li>按页面提示生成授权码。</li>
+              <li>在敏感配置里填写发件邮箱、服务器、端口和授权码。</li>
+              <li>保存后点击顶部“测试邮件”验证链路。</li>
+            </ul>
+            <div className="inline-actions">
+              <button className="link-button" type="button" onClick={props.openSmtpHelp}>查看 QQ 邮箱 SMTP 帮助</button>
+            </div>
+            <div className="inline-actions onboarding-footer">
+              <button className="secondary" type="button" onClick={() => props.setStep(0)}>上一步</button>
+              <button type="button" onClick={props.goSettings}>去敏感配置填写</button>
+              <button type="button" onClick={() => props.setStep(2)}>下一步</button>
+            </div>
+          </article>
+        )}
+
+        {props.step === 2 && (
+          <article className="card onboarding-card">
+            <p className="eyebrow">Step 3</p>
+            <h3>确认配置并开始使用</h3>
+            <p className="muted">完成引导前建议确认三件事：`openId` 已填写、通知收件人已添加、邮箱提醒链路已通过测试邮件验证。后续仍可在设置页继续修改。</p>
+            <ul className="bullet-list muted">
+              <li>openId 当前状态：{props.config.openId ? '已填写' : '未填写'}</li>
+              <li>邮箱收件人：{normalizeRecipients(props.config.email.recipients).length ? '已填写' : '未填写'}</li>
+              <li>隐私同意：已记录</li>
+            </ul>
+            <div className="inline-actions onboarding-footer">
+              <button className="secondary" type="button" onClick={() => props.setStep(1)}>上一步</button>
+              <button className="secondary" type="button" onClick={props.goNotify}>去通知页补收件人</button>
+              <button type="button" onClick={props.completeOnboarding}>{isLastStep ? '完成引导' : '继续'}</button>
+            </div>
+          </article>
+        )}
+      </section>
+    </div>
+  )
+}
+
 function SettingsPage(props: {
   config: RawConfig
   runtime: RuntimeInfo | null
@@ -641,51 +921,87 @@ function SettingsPage(props: {
   setUnlockPassword: (value: string) => void
   unlockSettings: () => void
   toggleAutostart: (enabled: boolean) => void
+  settingsTab: SettingsTab
+  setSettingsTab: (tab: SettingsTab) => void
+  openSmtpHelp: () => void
 }) {
   return (
-    <div className="stack-page narrow settings-page">
-      <section className="card form-card">
-        <div className="section-title">
-          <div>
-            <p className="eyebrow">Monitor</p>
-            <h3>监控参数</h3>
-          </div>
-          <label className="switch-line compact-switch">
-            <input type="checkbox" checked={Boolean(props.runtime?.autostart.openAtLogin)} onChange={(event) => props.toggleAutostart(event.target.checked)} />
-            开机自启动
-          </label>
-        </div>
-        <div className="form-grid">
-          <NumberField label="检查间隔（分钟）" value={props.config.checkIntervalMinutes} onChange={(value) => props.updateConfig({ checkIntervalMinutes: value })} />
-          <NumberField label="普通提醒阈值" value={props.config.warningThreshold} onChange={(value) => props.updateConfig({ warningThreshold: value })} />
-          <NumberField label="强提醒阈值" value={props.config.criticalThreshold} onChange={(value) => props.updateConfig({ criticalThreshold: value })} />
-          <NumberField label="重复提醒间隔" value={props.config.remindEveryChecks} onChange={(value) => props.updateConfig({ remindEveryChecks: value })} />
-        </div>
-      </section>
+    <div className="stack-page settings-page settings-page-wide">
+      <div className="page-tabs settings-tabs">
+        <button className={props.settingsTab === 'runtime' ? 'active' : ''} type="button" onClick={() => props.setSettingsTab('runtime')}>基础运行</button>
+        <button className={props.settingsTab === 'sensitive' ? 'active' : ''} type="button" onClick={() => props.setSettingsTab('sensitive')}>敏感配置</button>
+      </div>
 
-      <section className="card form-card">
-        <div className="section-title">
-          <div>
-            <p className="eyebrow">Security</p>
-            <h3>敏感配置</h3>
-          </div>
-          {!props.settingsUnlocked && (
-            <div className="unlock-row">
-              <input type="password" value={props.unlockPassword} onChange={(event) => props.setUnlockPassword(event.target.value)} placeholder="应用密码" />
-              <button type="button" onClick={props.unlockSettings}>解锁</button>
+      {props.settingsTab === 'runtime' && (
+        <section className="card form-card form-card-compact">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">Monitor</p>
+              <h3>基础运行参数</h3>
             </div>
-          )}
-        </div>
-        <div className="form-grid">
-          <TextField label="发件邮箱" value={props.config.email.sender} disabled={!props.settingsUnlocked} onChange={(value) => props.updateEmail({ sender: value })} />
-          <TextField label="SMTP 服务器" value={props.config.email.smtpHost} disabled={!props.settingsUnlocked} onChange={(value) => props.updateEmail({ smtpHost: value })} />
-          <NumberField label="SMTP 端口" value={props.config.email.smtpPort} disabled={!props.settingsUnlocked} onChange={(value) => props.updateEmail({ smtpPort: value })} />
-          <TextField label="SMTP 授权码" type="password" value={props.config.email.password} disabled={!props.settingsUnlocked} onChange={(value) => props.updateEmail({ password: value })} />
-        </div>
-        <div className="save-row">
-          <button type="button" onClick={() => { void props.save(); props.setUnlockPassword(''); }} disabled={props.saving}>{props.saving ? '保存中…' : '保存配置'}</button>
-        </div>
-      </section>
+            <label className="switch-line compact-switch">
+              <input type="checkbox" checked={Boolean(props.runtime?.autostart.openAtLogin)} onChange={(event) => props.toggleAutostart(event.target.checked)} />
+              开机自启动
+            </label>
+          </div>
+          <div className="form-grid">
+            <NumberField label="检查间隔（分钟）" value={props.config.checkIntervalMinutes} onChange={(value) => props.updateConfig({ checkIntervalMinutes: value })} />
+            <NumberField label="普通提醒阈值" value={props.config.warningThreshold} onChange={(value) => props.updateConfig({ warningThreshold: value })} />
+            <NumberField label="强提醒阈值" value={props.config.criticalThreshold} onChange={(value) => props.updateConfig({ criticalThreshold: value })} />
+            <NumberField label="重复提醒间隔" value={props.config.remindEveryChecks} onChange={(value) => props.updateConfig({ remindEveryChecks: value })} />
+          </div>
+          <p className="muted compact-note">这里只放运行参数。`openId`、发件邮箱和 SMTP 授权码都放在“敏感配置”页签里。</p>
+          <div className="save-row">
+            <button type="button" onClick={() => { void props.save() }} disabled={props.saving}>{props.saving ? '保存中…' : '保存基础参数'}</button>
+          </div>
+        </section>
+      )}
+
+      {props.settingsTab === 'sensitive' && (
+        <section className="card form-card form-card-compact sensitive-panel">
+          <div className="section-title section-title-top">
+            <div>
+              <p className="eyebrow">Security</p>
+              <h3>敏感配置</h3>
+              <p className="muted">先输入应用密码解锁，再查看或修改 `openId`、发件邮箱和 SMTP 授权码。</p>
+            </div>
+            {!props.settingsUnlocked && (
+              <div className="unlock-row unlock-row-wide">
+                <input type="password" value={props.unlockPassword} onChange={(event) => props.setUnlockPassword(event.target.value)} placeholder="应用密码" />
+                <button type="button" onClick={props.unlockSettings}>解锁</button>
+              </div>
+            )}
+          </div>
+
+          <div className="form-grid">
+            <div className="field field-span-2">
+              <span>openId</span>
+              <input
+                type={props.settingsUnlocked ? 'text' : 'password'}
+                value={props.config.openId}
+                disabled={!props.settingsUnlocked}
+                onChange={(event) => props.updateConfig({ openId: event.target.value })}
+                placeholder={props.settingsUnlocked ? '输入 openId' : '未解锁时默认隐藏'}
+              />
+            </div>
+            <TextField label="发件邮箱" value={props.config.email.sender} disabled={!props.settingsUnlocked} onChange={(value) => props.updateEmail({ sender: value })} />
+            <TextField label="SMTP 服务器" value={props.config.email.smtpHost} disabled={!props.settingsUnlocked} onChange={(value) => props.updateEmail({ smtpHost: value })} />
+            <NumberField label="SMTP 端口" value={props.config.email.smtpPort} disabled={!props.settingsUnlocked} onChange={(value) => props.updateEmail({ smtpPort: value })} />
+            <TextField label="SMTP 授权码" type="password" value={props.config.email.password} disabled={!props.settingsUnlocked} onChange={(value) => props.updateEmail({ password: value })} />
+          </div>
+
+          <div className="sensitive-links muted">
+            <span>需要帮助：</span>
+            <button className="link-button" type="button" onClick={props.openSmtpHelp}>QQ 邮箱 SMTP 帮助</button>
+            <span>·</span>
+            <span>openId 来自你自己抓到的小程序请求参数，不是宿舍号。</span>
+          </div>
+
+          <div className="save-row">
+            <button type="button" onClick={() => { void props.save(); props.setUnlockPassword(''); }} disabled={props.saving}>{props.saving ? '保存中…' : '保存敏感配置'}</button>
+          </div>
+        </section>
+      )}
     </div>
   )
 }
@@ -721,9 +1037,19 @@ function normalizeRecipients(value: RawConfig['email']['recipients']) {
   return value.split(',').map((item) => item.trim()).filter(Boolean)
 }
 
+function getMeterLocation(meter: MeterState) {
+  const roomLabel = (meter.roomLabel || '').trim()
+  if (!roomLabel) return ''
+  const suffix = `· ${meter.name}`
+  return roomLabel.endsWith(suffix) ? roomLabel.slice(0, -suffix.length).trim() : roomLabel
+}
+
 function normalizeConfig(config: RawConfig) {
   return {
     ...config,
+    onboardingCompleted: Boolean(config.onboardingCompleted),
+    privacyConsentVersion: config.privacyConsentVersion || '',
+    privacyConsentedAt: config.privacyConsentedAt || '',
     email: { ...config.email, recipients: normalizeRecipients(config.email.recipients) },
     emailTemplates: { ...defaultEmailTemplates, ...(config.emailTemplates || {}) },
   }
