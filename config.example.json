@@ -28,7 +28,7 @@
     },
     "recovery": {
       "subject": "[{appName}] {meterName} 已恢复正常",
-      "body": "{roomLabel}\n\n当前余额 {balance} 元，已经回到安全范围。\n本轮 {rotationAssignee} 已完成交费，下一次会轮到下一位。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}"
+      "body": "{roomLabel}\n\n当前余额 {balance} 元，已经回到安全范围。\n本轮 {rotationAssignee} 已完成交费，下一轮请 {nextRotationAssignee} 负责。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}"
     },
     "failure": {
       "subject": "[{appName}] 连续查询失败提醒",
@@ -51,6 +51,7 @@
   "dailyHeartbeat": false,
   "heartbeatTime": "22:00",
   "remindEveryChecks": 3,
+  "holidayMode": false,
   "meters": [
     {
       "name": "照明",

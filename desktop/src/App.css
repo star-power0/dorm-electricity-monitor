@@ -344,6 +344,8 @@
 .sidebar-status.critical span,
 .summary-card.critical .summary-number span,
 .meter-card.critical .meter-topline strong { color: var(--red); background: rgba(209, 44, 44, 0.095); }
+.sidebar-status.holiday span,
+.summary-card.holiday .summary-number span { color: var(--blue); background: rgba(31, 95, 214, 0.1); }
 
 .content {
   height: 100vh;
@@ -782,6 +784,13 @@
   margin-bottom: 12px;
 }
 
+.runtime-switches {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
 .switch-line {
   display: inline-flex;
   align-items: center;
@@ -793,6 +802,57 @@
 .switch-line input {
   width: 18px;
   height: 18px;
+}
+
+.mode-switch {
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f8fbff;
+  border: 1px solid rgba(31, 95, 214, 0.14);
+}
+
+.mode-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-track {
+  width: 38px;
+  height: 22px;
+  padding: 3px;
+  border-radius: 999px;
+  background: #d8e3f1;
+  transition: background 160ms ease;
+}
+
+.switch-track span {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
+  transition: transform 160ms ease;
+}
+
+.mode-switch.active {
+  color: var(--blue);
+  background: rgba(31, 95, 214, 0.08);
+  border-color: rgba(31, 95, 214, 0.22);
+}
+
+.mode-switch.active .switch-track {
+  background: linear-gradient(135deg, var(--blue), var(--cyan));
+}
+
+.mode-switch.active .switch-track span {
+  transform: translateX(16px);
+}
+
+.switch-label {
+  white-space: nowrap;
 }
 
 .save-row {

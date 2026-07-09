@@ -21,6 +21,7 @@ let checkTimer: NodeJS.Timeout | null = null
 let isChecking = false
 let isQuitting = false
 let latestState: MonitorState | null = null
+let latestConfig: RawConfig | null = null
 
 type BridgeResponse<T> = {
   ok: boolean
@@ -45,6 +46,7 @@ type BootstrapBridgeData = {
 
 type RawConfig = {
   checkIntervalMinutes?: number
+  holidayMode?: boolean
 }
 
 function ensureRuntimeFiles() {
@@ -105,15 +107,15 @@ function createTray() {
 
 function updateTrayMenu() {
   if (!tray) return
-  const summary = latestState ? stateSummary(latestState) : '等待检查'
+  const summary = latestConfig?.holidayMode ? '假期模式已开启' : (latestState ? stateSummary(latestState) : '等待检查')
   tray.setToolTip(`宿舍电费监控\n${summary}`)
   tray.setImage(nativeImage.createFromPath(appIconPath).resize({ width: 18, height: 18 }))
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: summary, enabled: false },
+      { label: latestConfig?.holidayMode ? '假期模式已开启' : summary, enabled: false },
       { type: 'separator' },
       { label: '显示主界面', click: showMainWindow },
-      { label: isChecking ? '正在查询…' : '立即查询', enabled: !isChecking, click: () => void runScheduledCheck() },
+      { label: latestConfig?.holidayMode ? '假期模式中，暂停查询' : (isChecking ? '正在查询…' : '立即查询'), enabled: !isChecking && !latestConfig?.holidayMode, click: () => void runScheduledCheck() },
       { type: 'separator' },
       {
         label: '退出',
@@ -177,11 +179,14 @@ async function runBridge<T>(command: string, payload?: unknown): Promise<T> {
 }
 
 async function getConfig(): Promise<RawConfig> {
-  return runBridge<RawConfig>('get-config')
+  latestConfig = await runBridge<RawConfig>('get-config')
+  return latestConfig
 }
 
 async function runScheduledCheck() {
   if (isChecking) return latestState
+  const config = latestConfig || await getConfig().catch(() => null)
+  if (config?.holidayMode) return latestState
   isChecking = true
   updateTrayMenu()
   try {
@@ -196,7 +201,13 @@ async function runScheduledCheck() {
 
 async function scheduleChecks(options: { config?: RawConfig; runImmediately?: boolean } = {}) {
   if (checkTimer) clearInterval(checkTimer)
-  const config = options.config || await getConfig().catch(() => ({ checkIntervalMinutes: 30 }))
+  checkTimer = null
+  const config = options.config || await getConfig().catch(() => ({ checkIntervalMinutes: 30, holidayMode: false }))
+  latestConfig = config
+  if (config.holidayMode) {
+    updateTrayMenu()
+    return
+  }
   const minutes = Math.max(5, Number(config.checkIntervalMinutes || 30))
   checkTimer = setInterval(() => {
     void runScheduledCheck()
@@ -229,6 +240,7 @@ function registerIpc() {
   ipcMain.handle('monitor:bootstrap', async () => {
     const data = await runBridge<BootstrapBridgeData>('bootstrap')
     latestState = data.state
+    latestConfig = data.config
     updateTrayMenu()
     void scheduleChecks({ config: data.config, runImmediately: true })
     return { ...data, runtime: runtimeInfo() }
@@ -242,7 +254,8 @@ function registerIpc() {
   ipcMain.handle('monitor:get-config', async () => getConfig())
   ipcMain.handle('monitor:save-config', async (_event: unknown, config: RawConfig) => {
     const saved = await runBridge<RawConfig>('save-config', config)
-    await scheduleChecks()
+    latestConfig = saved
+    await scheduleChecks({ config: saved })
     return saved
   })
   ipcMain.handle('monitor:send-test-mail', async () => runBridge('send-test-mail'))

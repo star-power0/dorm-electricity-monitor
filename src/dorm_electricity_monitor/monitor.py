@@ -36,6 +36,10 @@ def rotation_member_for(config: AppConfig, cursor: int) -> str:
     return members[cursor % len(members)] if members else ""
 
 
+def repeat_interval_for(config: AppConfig) -> int:
+    return max(1, int(config.remind_every_checks or 1))
+
+
 class MonitorEngine:
     def __init__(self, config: AppConfig, callback: StatusCallback | None = None) -> None:
         self.config = config
@@ -45,6 +49,8 @@ class MonitorEngine:
 
     def check_once(self) -> dict:
         state = read_state()
+        if self.config.holiday_mode:
+            return state
         state.setdefault("logs", [])
         state.setdefault("rotationState", {})
         state["lastCheckAt"] = now_text()
@@ -117,6 +123,9 @@ class MonitorEngine:
         should_notify = False
         action_text = None
         repeat_count = 1
+        current_cursor = int(rotation.get("cursor", 0) or 0)
+        active_assignee = int(rotation.get("activeAssignee", current_cursor) or 0)
+        next_assignee = rotation_member_for(self.config, current_cursor + 1)
 
         if level == "normal":
             if previous_level != "normal" and self.config.notify_on_recovery:
@@ -125,22 +134,28 @@ class MonitorEngine:
             repeat_count = 0
             if rotation.get("armed"):
                 rotation["armed"] = False
-                rotation["cursor"] = int(rotation.get("cursor", 0) or 0) + 1
+                rotation["cursor"] = current_cursor + 1
                 rotation["activeAssignee"] = rotation["cursor"]
         else:
             if not rotation.get("armed"):
                 rotation["armed"] = True
-                rotation["activeAssignee"] = int(rotation.get("cursor", 0) or 0)
+                rotation["activeAssignee"] = current_cursor
+                active_assignee = current_cursor
                 should_notify = True
                 action_text = f"{reading.name} 进入{self._level_cn(level)}，已发送提醒"
-            else:
+                repeat_count = 0
+            elif previous_level != level:
                 should_notify = True
-                action_text = f"{reading.name} 持续{self._level_cn(level)}，第 {previous_count + 1} 次检查再次提醒"
+                action_text = f"{reading.name} 进入{self._level_cn(level)}，已发送提醒"
+                repeat_count = 0
+            else:
                 repeat_count = previous_count + 1
-                if repeat_count >= self.config.remind_every_checks:
+                if repeat_count >= repeat_interval_for(self.config):
+                    should_notify = True
+                    action_text = f"{reading.name} 持续{self._level_cn(level)}，累计 {repeat_interval_for(self.config)} 次检查再次提醒"
                     repeat_count = 0
 
-        assignee = rotation_member_for(self.config, int(rotation.get("activeAssignee", 0) or 0))
+        assignee = rotation_member_for(self.config, active_assignee)
         payload = build_variables_for_meter(
             self.config,
             reading,
@@ -148,7 +163,8 @@ class MonitorEngine:
             {
                 "time": now_text(),
                 "rotationAssignee": assignee,
-                "rotationCursor": int(rotation.get("cursor", 0) or 0),
+                "nextRotationAssignee": next_assignee,
+                "rotationCursor": current_cursor,
             },
         )
         if should_notify:

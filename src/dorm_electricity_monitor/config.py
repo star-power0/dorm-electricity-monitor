@@ -51,7 +51,7 @@ DEFAULT_EMAIL_TEMPLATES = {
         "body": (
             "{roomLabel}\n\n"
             "当前余额 {balance} 元，已经回到安全范围。\n"
-            "本轮 {rotationAssignee} 已完成交费，下一次会轮到下一位。\n\n"
+            "本轮 {rotationAssignee} 已完成交费，下一轮请 {nextRotationAssignee} 负责。\n\n"
             "剩余电量：{energy} 度\n"
             "采集时间：{collectedAt}"
         ),
@@ -113,6 +113,7 @@ class AppConfig:
     daily_heartbeat: bool
     heartbeat_time: str
     remind_every_checks: int
+    holiday_mode: bool
     meters: list[MeterConfig]
     rotation_members: list[str]
 
@@ -166,6 +167,7 @@ def normalize_raw_config(data: dict[str, Any]) -> dict[str, Any]:
     normalized["onboardingCompleted"] = bool(normalized.get("onboardingCompleted", False))
     normalized["privacyConsentVersion"] = str(normalized.get("privacyConsentVersion", "")).strip()
     normalized["privacyConsentedAt"] = str(normalized.get("privacyConsentedAt", "")).strip()
+    normalized["holidayMode"] = bool(normalized.get("holidayMode", False))
     return normalized
 
 
@@ -206,6 +208,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         daily_heartbeat=bool(data.get("dailyHeartbeat", False)),
         heartbeat_time=str(data.get("heartbeatTime", "22:00")),
         remind_every_checks=int(data.get("remindEveryChecks", 3)),
+        holiday_mode=bool(data.get("holidayMode", False)),
         meters=meters,
         rotation_members=normalize_rotation_members(data.get("rotationMembers")),
     )

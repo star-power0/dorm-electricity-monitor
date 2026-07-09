@@ -31,7 +31,7 @@ const defaultEmailTemplates: RawConfig['emailTemplates'] = {
   },
   recovery: {
     subject: '[{appName}] {meterName} 已恢复正常',
-    body: '{roomLabel}\n\n当前余额 {balance} 元，已经回到安全范围。\n本轮 {rotationAssignee} 已完成交费，下一次会轮到下一位。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}',
+    body: '{roomLabel}\n\n当前余额 {balance} 元，已经回到安全范围。\n本轮 {rotationAssignee} 已完成交费，下一轮请 {nextRotationAssignee} 负责。\n\n剩余电量：{energy} 度\n采集时间：{collectedAt}',
   },
   failure: {
     subject: '[{appName}] 连续查询失败提醒',
@@ -53,6 +53,8 @@ const previewVariables: Record<string, string> = {
   criticalThreshold: '5.00',
   level: 'critical',
   time: '2026-06-29 20:30:00',
+  rotationAssignee: 'A',
+  nextRotationAssignee: 'B',
   failureCount: '3',
   error: '网络连接超时',
 }
@@ -129,7 +131,7 @@ function App() {
     () => Object.entries(state?.meters || {}).map(([key, m]) => ({ ...m, key })),
     [state],
   )
-  const status = useMemo(() => getOverallStatus(state), [state])
+  const status = useMemo(() => getOverallStatus(state, Boolean(config?.holidayMode)), [state, config?.holidayMode])
   const meterAssignees = useMemo(() => {
     const members = config?.rotationMembers?.length ? config.rotationMembers : ['A', 'B', 'C', 'D']
     return Object.fromEntries(
@@ -167,6 +169,10 @@ function App() {
   }
 
   async function runCheck() {
+    if (config?.holidayMode) {
+      showToast({ type: 'info', text: '假期模式已开启，请先关闭假期模式。' })
+      return
+    }
     setChecking(true)
     try {
       const nextState = await window.monitorApi.checkOnce()
@@ -288,6 +294,10 @@ function App() {
   }
 
   async function sendTestMail() {
+    if (config?.holidayMode) {
+      showToast({ type: 'info', text: '假期模式已开启，请先关闭假期模式。' })
+      return
+    }
     try {
       await window.monitorApi.sendTestMail()
       showToast({ type: 'success', text: '测试邮件已发送。' })
@@ -939,10 +949,17 @@ function SettingsPage(props: {
               <p className="eyebrow">Monitor</p>
               <h3>基础运行参数</h3>
             </div>
-            <label className="switch-line compact-switch">
-              <input type="checkbox" checked={Boolean(props.runtime?.autostart.openAtLogin)} onChange={(event) => props.toggleAutostart(event.target.checked)} />
-              开机自启动
-            </label>
+            <div className="runtime-switches">
+              <label className={`switch-line mode-switch ${props.config.holidayMode ? 'active' : ''}`}>
+                <input type="checkbox" checked={props.config.holidayMode} onChange={(event) => props.updateConfig({ holidayMode: event.target.checked })} />
+                <span className="switch-track"><span></span></span>
+                <span className="switch-label">假期模式</span>
+              </label>
+              <label className="switch-line compact-switch">
+                <input type="checkbox" checked={Boolean(props.runtime?.autostart.openAtLogin)} onChange={(event) => props.toggleAutostart(event.target.checked)} />
+                开机自启动
+              </label>
+            </div>
           </div>
           <div className="form-grid">
             <NumberField label="检查间隔（分钟）" value={props.config.checkIntervalMinutes} onChange={(value) => props.updateConfig({ checkIntervalMinutes: value })} />
@@ -1022,7 +1039,8 @@ function TextAreaField({ label, value, onChange, disabled }: { label: string; va
   return <label className="field"><span>{label}</span><textarea value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>
 }
 
-function getOverallStatus(state: MonitorState | null) {
+function getOverallStatus(state: MonitorState | null, holidayMode = false) {
+  if (holidayMode) return { level: 'holiday', label: '假期', title: '假期模式', detail: '当前状态已锁定，监控和邮件已暂停。' }
   if (!state) return { level: 'idle', label: '等待', title: '读取本地状态', detail: '应用正在读取本地状态。' }
   if (state.lastError) return { level: 'critical', label: '失败', title: '查询失败', detail: state.lastError.split('\n')[0] }
   const levels = Object.values(state.meters || {}).map((meter) => meter.level)
@@ -1047,6 +1065,7 @@ function getMeterLocation(meter: MeterState) {
 function normalizeConfig(config: RawConfig) {
   return {
     ...config,
+    holidayMode: Boolean(config.holidayMode),
     onboardingCompleted: Boolean(config.onboardingCompleted),
     privacyConsentVersion: config.privacyConsentVersion || '',
     privacyConsentedAt: config.privacyConsentedAt || '',

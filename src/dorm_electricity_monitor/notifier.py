@@ -141,6 +141,7 @@ def build_template_variables(config: AppConfig, overrides: dict[str, Any] | None
         "level": "",
         "time": "",
         "rotationAssignee": "",
+        "nextRotationAssignee": "",
         "rotationCursor": "",
     }
     if overrides:

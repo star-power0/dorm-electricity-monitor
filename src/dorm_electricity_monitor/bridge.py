@@ -60,6 +60,8 @@ def _command_save_config() -> dict[str, Any]:
 
 def _command_send_test_mail() -> dict[str, Any]:
     config = load_config()
+    if config.holiday_mode:
+        raise RuntimeError("假期模式已开启，请先关闭假期模式。")
     notifier = MultiNotifier(config)
     notifier.send_template("test", build_template_variables(config, {"time": now_text()}))
     return {"sent": True, "channel": config.notify_channel}
