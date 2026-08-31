@@ -5,7 +5,7 @@
   "author": "star-power0",
   "license": "MIT",
   "type": "module",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "main": "dist-electron/main/index.cjs",
   "scripts": {
     "dev": "concurrently \"npm:dev:renderer\" \"npm:dev:electron\"",

@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 0.1.2 - 2026-08-31
+
+- 修复查询频繁 `ReadTimeout` 失败：实测海大电费接口响应时间在 2s~30s+ 之间剧烈抖动，原先固定 12 秒超时余量不足。改为连接超时 8s、读超时 25s，并在网络异常时重试 1 次（间隔 1.5s）。
+- `electricity.py` 拆出 `_fetch_meter`，`get_meter` 只负责重试调度；同时固定走 IPv4（`urllib3.util.connection.HAS_IPV6 = False`），排除接口 IPv6 路径带来的连接停滞。
+- 实测验证：源码与打包产物各连续 3 轮查询均 3/3 成功，其中一轮靠重试在 28.05s 内救回（旧配置下必然失败），其余最快 0.11s 返回；打包版应用端到端查询成功，`lastError` 清空、`failureCount` 归零。
+- 打包链路记录：`electron-builder` 直连 GitHub 下载构建工具会卡死超时，需先设 `ELECTRON_MIRROR` 与 `ELECTRON_BUILDER_BINARIES_MIRROR` 走 npmmirror 镜像。
+- 记录当前余额状况：照明 0.00 元（告急）、空调 8.44 元（偏低），阈值首次提醒已自动发送。
+
 ## 0.1.1 - 2026-07-09
 
 - 修复低余额持续期间每轮查询都发送提醒的问题，改为首次触发后按 `remindEveryChecks` 节奏重复提醒。

@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 import requests
+import urllib3.util.connection
+
+# The API host also resolves to an IPv6 address whose path is unreliable here,
+# so pin requests to IPv4 to remove one source of connection stalls.
+urllib3.util.connection.HAS_IPV6 = False
 
 from .config import API_URL, AppConfig, MeterConfig
+
+# Upstream response time swings between ~2s and 30s+, so keep the connect
+# timeout tight but give the read phase room, and retry once on network errors.
+CONNECT_TIMEOUT_SECONDS = 8
+READ_TIMEOUT_SECONDS = 25
+MAX_ATTEMPTS = 2
+RETRY_DELAY_SECONDS = 1.5
 
 
 @dataclass(frozen=True)
@@ -39,10 +52,21 @@ class ElectricityClient:
         )
 
     def get_meter(self, meter: MeterConfig) -> MeterReading:
+        attempts_left = MAX_ATTEMPTS
+        while True:
+            attempts_left -= 1
+            try:
+                return self._fetch_meter(meter)
+            except requests.RequestException:
+                if attempts_left <= 0:
+                    raise
+                time.sleep(RETRY_DELAY_SECONDS)
+
+    def _fetch_meter(self, meter: MeterConfig) -> MeterReading:
         response = self.session.get(
             API_URL,
             params={"openId": self.config.open_id, "type": meter.type},
-            timeout=12,
+            timeout=(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS),
         )
         response.raise_for_status()
         payload = response.json()

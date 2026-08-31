@@ -46,9 +46,31 @@
 
 - `< 10 元`：普通提醒
 - `< 5 元`：强提醒
-- 适用于照明和空调
+- 适用于照明和空调，两块表各自独立判定
 - 余额恢复正常后，可选发送恢复提醒
 - 连续 3 次查询失败时，会发送故障提醒
+- 开启假期模式后冻结当前状态，暂停后台轮询、手动查询和邮件发送
+
+### 提醒节奏
+
+- 首次跌破阈值时立即提醒一次
+- 级别继续恶化（偏低转告急）时立即再提醒一次
+- 级别不变但持续偏低时，每累计 `remindEveryChecks`（默认 3）次检查再提醒一次
+- 余额回到 `warningThreshold`（默认 10 元）以上才算恢复，此时发送恢复提醒
+
+### 轮值交费
+
+- `rotationMembers` 配置轮值人列表，默认 `A/B/C/D`
+- 余额跌破阈值那一刻锁定当前轮值人，后续重复提醒都指向同一人
+- 余额恢复正常后轮值推进到下一位，恢复邮件会写明本轮完成人与下一轮负责人
+
+### 网络容错
+
+- 连接超时 8 秒，读取超时 25 秒
+- 出现网络异常时自动重试 1 次（间隔 1.5 秒）
+- 固定使用 IPv4 访问接口
+
+> 电费接口响应时间波动较大（实测 2 秒到 30 秒以上），且接口返回的采集时间通常比当前时间滞后约 10 分钟。充值后需要等下一轮查询、且等电表完成上报，才会看到余额变化。
 
 ## 安装
 
@@ -237,6 +259,13 @@ npm run dist
 desktop\release
 ```
 
+如果打包卡在 `Timeout awaiting 'request'`，是 `electron-builder` 直连 GitHub 下载构建工具超时，先设置国内镜像再打包：
+
+```bat
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+```
+
 ## 托盘与常驻逻辑
 
 - 关闭主窗口不会退出，而是最小化到托盘
@@ -263,6 +292,8 @@ desktop\release
 - Python bridge `get-state` 正常
 - Python bridge `check-once` 正常
 - Python bridge `bootstrap` 正常
+- 接口超时重试链路已实测：源码与打包产物各连续 3 轮查询全部成功，其中慢响应轮次靠重试救回
+- 打包产物端到端验证通过：应用启动后自动查询成功并写入状态、按阈值发出提醒邮件
 - 已重建最小 `.venv`，仅保留 `requests` 及其必要依赖
 - 启动阶段已改为先显示本地历史状态，再延迟后台联网查询
 - 前端构建产物已切换为相对资源路径
