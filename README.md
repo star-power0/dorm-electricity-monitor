@@ -40,7 +40,16 @@
 - 收件人可视化编辑
 - 设置页敏感项解锁后可编辑
 - 首次启动引导
+- 照明 / 空调独立开关，可只监控其中一块表
 - 同一阈值阶段首次提醒，之后每累计 3 次检查再提醒一次
+
+## 监控范围
+
+- 照明和空调各有独立开关，在设置页「基础运行 → 监控范围」里切换
+- 关掉的表不再发起查询，也不再参与阈值判定和邮件提醒
+- 至少保留一块表启用，全关时会拒绝保存并给出提示
+- 已关闭的表在总览页不再显示卡片
+- 开关状态存在 `config.json` 的 `meters[].enabled` 字段，默认 `true`
 
 ## 监控规则
 
@@ -95,7 +104,7 @@ npm install
 
 ```json
 {
-  "openId": "ofDET4ypS5bH***za_8CI",
+  "openId": "ofDET4ypS5bH***za_8CI（填写你自己的 openId）",
   "notifyChannel": "email",
   "email": {
     "smtpHost": "smtp.qq.com",
@@ -108,7 +117,7 @@ npm install
     "useSsl": true
   },
   "security": {
-    "adminPassword": "123456"
+    "adminPassword": "请改成你自己的应用密码"
   },
   "checkIntervalMinutes": 30,
   "warningThreshold": 10,
@@ -126,13 +135,7 @@ npm install
 - 查询你当前已经绑定的宿舍电表
 - 区分照明 `type=1` 与空调 `type=2`
 
-它看起来通常会像这样：
-
-```text
-ofDET4ypS5bH***za_8CI
-```
-
-或者你在文档、截图里应该只展示打码后的形式：
+它看起来通常会像这样（示例值，请替换成你自己的）：
 
 ```text
 ofDET4ypS5bH***za_8CI

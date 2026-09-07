@@ -127,11 +127,16 @@ function App() {
     }, 3200)
   }
 
-  const meters = useMemo(
-    () => Object.entries(state?.meters || {}).map(([key, m]) => ({ ...m, key })),
-    [state],
+  const meters = useMemo(() => {
+    const enabledTypes = new Set((config?.meters || []).filter((m) => m.enabled).map((m) => String(m.type)))
+    return Object.entries(state?.meters || {})
+      .filter(([key]) => enabledTypes.has(key))
+      .map(([key, m]) => ({ ...m, key }))
+  }, [state, config])
+  const status = useMemo(
+    () => getOverallStatus(state, Boolean(config?.holidayMode), meters),
+    [state, config?.holidayMode, meters],
   )
-  const status = useMemo(() => getOverallStatus(state, Boolean(config?.holidayMode)), [state, config?.holidayMode])
   const meterAssignees = useMemo(() => {
     const members = config?.rotationMembers?.length ? config.rotationMembers : ['A', 'B', 'C', 'D']
     return Object.fromEntries(
@@ -143,12 +148,15 @@ function App() {
   }, [state, config])
   const rotationSummary = useMemo(() => {
     const members = config?.rotationMembers?.length ? config.rotationMembers : ['A', 'B', 'C', 'D']
-    return Object.entries(state?.rotationState || {}).map(([key, rs]) => ({
-      key,
-      label: state?.meters?.[key]?.name ?? key,
-      assignee: members[(rs.activeAssignee ?? 0) % members.length],
-      armed: rs.armed ?? false,
-    }))
+    const enabledTypes = new Set((config?.meters || []).filter((m) => m.enabled).map((m) => String(m.type)))
+    return Object.entries(state?.rotationState || {})
+      .filter(([key]) => enabledTypes.has(key))
+      .map(([key, rs]) => ({
+        key,
+        label: state?.meters?.[key]?.name ?? key,
+        assignee: members[(rs.activeAssignee ?? 0) % members.length],
+        armed: rs.armed ?? false,
+      }))
   }, [state, config])
   const pageTitle = navItems.find((item) => item.key === page)?.label || '总览'
 
@@ -327,6 +335,18 @@ function App() {
     setConfig({ ...config, email: { ...config.email, ...patch } })
   }
 
+  function toggleMeter(type: number) {
+    if (!config) return
+    const nextMeters = config.meters.map((meter) =>
+      meter.type === type ? { ...meter, enabled: !meter.enabled } : meter,
+    )
+    if (!nextMeters.some((meter) => meter.enabled)) {
+      showToast({ type: 'error', text: '至少保留一块电表，否则无法查询余额。' })
+      return
+    }
+    setConfig({ ...config, meters: nextMeters })
+  }
+
   function updateRotationMembers(value: string) {
     if (!config) return
     const members = value.split(',').map((item) => item.trim()).filter(Boolean)
@@ -374,6 +394,10 @@ function App() {
 
   function unlockSettings() {
     if (!config) return
+    if (!config.security.adminPassword) {
+      showToast({ type: 'error', text: '尚未设置应用密码，请先在配置文件里设置 security.adminPassword。' })
+      return
+    }
     if (unlockPassword === config.security.adminPassword) {
       setSettingsUnlocked(true)
       setUnlockPassword('')
@@ -385,6 +409,10 @@ function App() {
 
   function unlockTemplates() {
     if (!config) return
+    if (!config.security.adminPassword) {
+      showToast({ type: 'error', text: '尚未设置应用密码，请先在配置文件里设置 security.adminPassword。' })
+      return
+    }
     if (templatePassword === config.security.adminPassword) {
       setTemplateUnlocked(true)
       setTemplatePassword('')
@@ -505,6 +533,7 @@ function App() {
             setUnlockPassword={setUnlockPassword}
             unlockSettings={unlockSettings}
             toggleAutostart={toggleAutostart}
+            toggleMeter={toggleMeter}
             settingsTab={settingsTab}
             setSettingsTab={setSettingsTab}
             openSmtpHelp={openSmtpHelp}
@@ -931,6 +960,7 @@ function SettingsPage(props: {
   setUnlockPassword: (value: string) => void
   unlockSettings: () => void
   toggleAutostart: (enabled: boolean) => void
+  toggleMeter: (type: number) => void
   settingsTab: SettingsTab
   setSettingsTab: (tab: SettingsTab) => void
   openSmtpHelp: () => void
@@ -966,6 +996,32 @@ function SettingsPage(props: {
             <NumberField label="普通提醒阈值" value={props.config.warningThreshold} onChange={(value) => props.updateConfig({ warningThreshold: value })} />
             <NumberField label="强提醒阈值" value={props.config.criticalThreshold} onChange={(value) => props.updateConfig({ criticalThreshold: value })} />
             <NumberField label="重复提醒间隔" value={props.config.remindEveryChecks} onChange={(value) => props.updateConfig({ remindEveryChecks: value })} />
+          </div>
+          <div className="meter-scope">
+            <div className="scope-head">
+              <div>
+                <p className="eyebrow">Scope</p>
+                <h4>监控范围</h4>
+              </div>
+              <span className="scope-hint">{props.config.meters.filter((m) => m.enabled).length} / {props.config.meters.length} 块电表启用</span>
+            </div>
+            <div className="scope-list">
+              {props.config.meters.map((meter) => (
+                <button
+                  key={meter.type}
+                  type="button"
+                  className={`scope-chip ${meter.enabled ? 'active' : ''}`}
+                  onClick={() => props.toggleMeter(meter.type)}
+                  aria-pressed={meter.enabled}
+                >
+                  <span className="scope-copy">
+                    <strong>{meter.name}</strong>
+                    <small>{meter.enabled ? '已启用，参与查询与提醒' : '已关闭，不再查询'}</small>
+                  </span>
+                  <span className="scope-switch"><span></span></span>
+                </button>
+              ))}
+            </div>
           </div>
           <p className="muted compact-note">这里只放运行参数。`openId`、发件邮箱和 SMTP 授权码都放在“敏感配置”页签里。</p>
           <div className="save-row">
@@ -1039,11 +1095,11 @@ function TextAreaField({ label, value, onChange, disabled }: { label: string; va
   return <label className="field"><span>{label}</span><textarea value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></label>
 }
 
-function getOverallStatus(state: MonitorState | null, holidayMode = false) {
+function getOverallStatus(state: MonitorState | null, holidayMode = false, meters: MeterState[] = []) {
   if (holidayMode) return { level: 'holiday', label: '假期', title: '假期模式', detail: '当前状态已锁定，监控和邮件已暂停。' }
   if (!state) return { level: 'idle', label: '等待', title: '读取本地状态', detail: '应用正在读取本地状态。' }
   if (state.lastError) return { level: 'critical', label: '失败', title: '查询失败', detail: state.lastError.split('\n')[0] }
-  const levels = Object.values(state.meters || {}).map((meter) => meter.level)
+  const levels = meters.map((meter) => meter.level)
   if (levels.includes('critical')) return { level: 'critical', label: '告急', title: '余额告急', detail: '已有电表余额低于强提醒阈值。' }
   if (levels.includes('warning')) return { level: 'warning', label: '偏低', title: '余额偏低', detail: '已有电表余额低于普通提醒阈值。' }
   if (levels.length) return { level: 'normal', label: '正常', title: '运行正常', detail: '所有电表余额处于安全范围。' }
@@ -1071,6 +1127,7 @@ function normalizeConfig(config: RawConfig) {
     privacyConsentedAt: config.privacyConsentedAt || '',
     email: { ...config.email, recipients: normalizeRecipients(config.email.recipients) },
     emailTemplates: { ...defaultEmailTemplates, ...(config.emailTemplates || {}) },
+    meters: (config.meters || []).map((meter) => ({ ...meter, enabled: meter.enabled !== false })),
   }
 }
 

@@ -60,7 +60,7 @@ export type RawConfig = {
   heartbeatTime: string
   remindEveryChecks: number
   holidayMode: boolean
-  meters: Array<{ name: string; type: number }>
+  meters: Array<{ name: string; type: number; enabled: boolean }>
   onboardingCompleted: boolean
   privacyConsentVersion: string
   privacyConsentedAt: string

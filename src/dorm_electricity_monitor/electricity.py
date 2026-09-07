@@ -84,7 +84,7 @@ class ElectricityClient:
         )
 
     def get_all(self) -> list[MeterReading]:
-        return [self.get_meter(meter) for meter in self.config.meters]
+        return [self.get_meter(meter) for meter in self.config.enabled_meters]
 
 
 def clean_room_label(raw: str, meter_name: str) -> str:

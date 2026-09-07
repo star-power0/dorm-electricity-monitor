@@ -75,6 +75,7 @@ DEFAULT_ROTATION_MEMBERS = ["A", "B", "C", "D"]
 class MeterConfig:
     name: str
     type: int
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,10 @@ class AppConfig:
     holiday_mode: bool
     meters: list[MeterConfig]
     rotation_members: list[str]
+
+    @property
+    def enabled_meters(self) -> list[MeterConfig]:
+        return [meter for meter in self.meters if meter.enabled]
 
 
 def app_dir() -> Path:
@@ -168,13 +173,30 @@ def normalize_raw_config(data: dict[str, Any]) -> dict[str, Any]:
     normalized["privacyConsentVersion"] = str(normalized.get("privacyConsentVersion", "")).strip()
     normalized["privacyConsentedAt"] = str(normalized.get("privacyConsentedAt", "")).strip()
     normalized["holidayMode"] = bool(normalized.get("holidayMode", False))
+    normalized["meters"] = [
+        {
+            **item,
+            "name": str(item.get("name", "")).strip(),
+            "type": int(item.get("type", 0)),
+            "enabled": bool(item.get("enabled", True)),
+        }
+        for item in normalized.get("meters", [])
+        if isinstance(item, dict)
+    ]
     return normalized
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     raw = json.loads(path.read_text(encoding="utf-8"))
     data = normalize_raw_config(raw)
-    meters = [MeterConfig(name=item["name"], type=int(item["type"])) for item in data["meters"]]
+    meters = [
+        MeterConfig(
+            name=item["name"],
+            type=int(item["type"]),
+            enabled=bool(item.get("enabled", True)),
+        )
+        for item in data["meters"]
+    ]
     email_data = data.get("email", {})
     recipients_raw = email_data.get("recipients", email_data.get("recipient", []))
     if isinstance(recipients_raw, str):
@@ -199,7 +221,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         ),
         email_templates=templates,
         security=SecurityConfig(
-            admin_password=str((data.get("security") or {}).get("adminPassword", "123456")).strip(),
+            admin_password=str((data.get("security") or {}).get("adminPassword", "")).strip(),
         ),
         check_interval_minutes=int(data.get("checkIntervalMinutes", 30)),
         warning_threshold=float(data.get("warningThreshold", 10)),

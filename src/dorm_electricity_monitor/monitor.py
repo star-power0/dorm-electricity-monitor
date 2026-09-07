@@ -55,6 +55,14 @@ class MonitorEngine:
         state.setdefault("rotationState", {})
         state["lastCheckAt"] = now_text()
         notifications_sent: list[str] = []
+        if not self.config.enabled_meters:
+            state["lastError"] = None
+            state["failureCount"] = 0
+            self._append_log(state, f"{now_text()} 未查询：照明与空调均已关闭")
+            write_state(state)
+            if self.callback:
+                self.callback(state)
+            return state
         try:
             readings = self.client.get_all()
             state["lastSuccessAt"] = now_text()

@@ -1196,6 +1196,113 @@ textarea {
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
 }
 
+.meter-scope {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #f8fbff;
+  border: 1px solid rgba(38, 76, 128, 0.08);
+}
+
+.scope-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scope-head h4 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 16px;
+  letter-spacing: -0.03em;
+}
+
+.scope-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.scope-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(228px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.scope-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  color: var(--text);
+  background: #ffffff;
+  border: 1px solid var(--line);
+  box-shadow: none;
+  text-align: left;
+}
+
+.scope-chip:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(31, 95, 214, 0.28);
+  box-shadow: 0 10px 22px rgba(31, 95, 214, 0.09);
+}
+
+.scope-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.scope-copy strong {
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+
+.scope-copy small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.scope-switch {
+  flex-shrink: 0;
+  width: 38px;
+  height: 22px;
+  padding: 3px;
+  border-radius: 999px;
+  background: #d8e3f1;
+  transition: background 160ms ease;
+}
+
+.scope-switch span {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
+  transition: transform 160ms ease;
+}
+
+.scope-chip.active {
+  border-color: rgba(31, 95, 214, 0.22);
+  background: rgba(31, 95, 214, 0.045);
+}
+
+.scope-chip.active .scope-switch {
+  background: linear-gradient(135deg, var(--blue), var(--cyan));
+}
+
+.scope-chip.active .scope-switch span {
+  transform: translateX(16px);
+}
+
 @media (max-width: 1180px) {
   .notify-grid,
   .template-layout,

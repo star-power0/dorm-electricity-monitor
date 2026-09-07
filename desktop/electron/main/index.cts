@@ -8,7 +8,6 @@ const repoRoot = path.resolve(desktopRoot, '..')
 const runtimeRoot = app.isPackaged ? process.resourcesPath : repoRoot
 const dataRoot = app.isPackaged ? app.getPath('userData') : repoRoot
 const pythonExecutable = path.join(runtimeRoot, '.venv', 'Scripts', 'python.exe')
-const bundledConfigPath = path.join(runtimeRoot, 'config.json')
 const bundledExampleConfigPath = path.join(runtimeRoot, 'config.example.json')
 const runtimeConfigPath = path.join(dataRoot, 'config.json')
 const appIconPath = app.isPackaged
@@ -51,12 +50,10 @@ type RawConfig = {
 
 function ensureRuntimeFiles() {
   fs.mkdirSync(dataRoot, { recursive: true })
-  if (!fs.existsSync(runtimeConfigPath)) {
-    if (fs.existsSync(bundledConfigPath)) {
-      fs.copyFileSync(bundledConfigPath, runtimeConfigPath)
-    } else if (fs.existsSync(bundledExampleConfigPath)) {
-      fs.copyFileSync(bundledExampleConfigPath, runtimeConfigPath)
-    }
+  // Only the sanitized example config is shipped: copying a developer's real
+  // config.json would leak openId and SMTP credentials to every user.
+  if (!fs.existsSync(runtimeConfigPath) && fs.existsSync(bundledExampleConfigPath)) {
+    fs.copyFileSync(bundledExampleConfigPath, runtimeConfigPath)
   }
 }
 

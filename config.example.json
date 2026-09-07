@@ -42,7 +42,7 @@
     "D"
   ],
   "security": {
-    "adminPassword": "123456"
+    "adminPassword": "change_me_please"
   },
   "checkIntervalMinutes": 30,
   "warningThreshold": 10,
@@ -55,11 +55,13 @@
   "meters": [
     {
       "name": "照明",
-      "type": 1
+      "type": 1,
+      "enabled": true
     },
     {
       "name": "空调",
-      "type": 2
+      "type": 2,
+      "enabled": true
     }
   ]
 }
