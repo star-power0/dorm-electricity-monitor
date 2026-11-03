@@ -83,6 +83,19 @@
 
 ## 安装
 
+### 最终用户（下载 Release 即用）
+
+GitHub Release 提供两种安装包：
+
+| 包 | 说明 |
+|---|---|
+| `Dorm Electricity Monitor Setup x.y.z.exe` | **完整版**：NSIS 安装器，可选安装目录、写开始菜单/桌面快捷方式、支持卸载 |
+| `Dorm Electricity Monitor x.y.z.exe` | **便携版**：免安装单文件，双击即用，适合 U 盘或不想写注册表的场景 |
+
+数据与配置保存在 `%APPDATA%\dorm-electricity-monitor-desktop\`（`config.json`、`state.json`），与安装方式无关，两种包可互换使用。
+
+### 开发者
+
 一键初始化 Python 环境和桌面端依赖：
 
 ```bat

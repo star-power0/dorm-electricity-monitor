@@ -1,5 +1,24 @@
 # CHANGELOG
 
+## 0.2.1 误判恢复修复与轮值调换 - 2026-11-04
+
+- 事故复盘（2026-11-03）：接口在 09:46–10:46 连续 3 次返回异常余额 20.27 元（真实值约 9.4 元，前后耗电轨迹 09:16 9.89 → 11:16 8.84 完全吻合、无充值），程序据此发出「柯子晶 已完成交费」恢复邮件并把轮值 cursor 10→11；11:16 真实余额 8.84 元再次告警时提醒错发给李嘉哲。18:46 的 5.79 → 55.49（+50 元）为真实充值。
+- `monitor.py` 新增读数可信度过滤 `reading_issues()`，不合格读数不写入状态、不发邮件、不动轮值：采集时间滞后超 60 分钟或早于上一次有效读数、房间信息变化、金额/电量比价偏离上次超过 10%、有余额但电量为 0。
+- 全部读数被拒时按查询失败计入 `failureCount`，连续 3 次仍会发故障邮件，坏数据源不会静默失联；部分被拒时在日志中记录「读数存疑已忽略」。
+- 恢复改为两段确认：告警后首次回到正常只记 `pendingRecovery`（日志「余额回升…待下轮读数确认」），连续第二次正常才发恢复邮件、推进轮值；期间回落则取消，轮值原地不动。告警进入、重复提醒、节流间隔逻辑不变。
+- 轮值名单调换（运行时 `config.json`）：先按字面执行 `柯子晶, 李嘉哲` 互换，随后按「柯子晶被假恢复跳过、应优先补位」的本意修正为 `柯子晶, 黄泼, 黄志强, 李嘉哲`（cursor 12 恰指向柯子晶）；已备份 `config.json.bak-20261104` 与 `config.json.bak-20261104-2`。验证 `get-config` 返回新名单，应用重启后查询正常。
+- 测试：新增 `tests/test_recovery_guard.py`（8 例，含 11-03 事故回放、真充值确认、回弹取消、比价/房间/零电量异常、失败邮件、正常告警流）；对 git HEAD 原始代码 7/8 失败（Red），对新代码 8/8 通过（Green）。
+- 补丁同步到全部三份运行源码：仓库 `src/`、`desktop/release/win-unpacked/resources/src/`（当前运行实例）、开机自启 Temp 副本 `resources/src/`（三者 MD5 一致 `63ADC4CD58EE8C36C892A2ABFEF400DD`）。
+- 端到端验证：bridge `get-config` 返回调换后名单；真实 `check-once` 成功（空调 53.27 元，`failureCount=0`）；应用重启后 02:01:58 自动查询成功。
+- 运维记录：本会话 shell 携带 `ELECTRON_RUN_AS_NODE=1`，直接 Start-Process 启动 Electron 会以 Node 模式秒退（code 0 无输出）；启动前需清除该变量（项目 `start-electron.cjs` 已有同类防护）。开机自启项仍指向 Temp Squirrel 副本（已同步补丁，但 Temp 目录存在被清理风险，后续可考虑改指 win-unpacked）。
+
+## 0.2.0 运维修复 - 2026-10-12
+
+- 排查便携版启动失败：临时运行目录中的 `urllib3`、`requests` 等依赖源文件缺失，导致 `ModuleNotFoundError: No module named 'urllib3.util.connection'`。残留缓存证明缺失模块此前曾成功加载；具体删除进程尚未确认。
+- 程序退出后，将损坏运行目录备份到 `A:\ClaudeWorkspace\.tmp\dorm-electricity-monitor\damaged-runtime-20261013-144707`，重新启动原版 `desktop/release/Dorm Electricity Monitor 0.2.0.exe`，完成重新解压；未修改业务代码和用户配置。
+- 验证：五个依赖包源文件恢复完整，打包环境 `bootstrap` 返回成功，应用自动查询成功，`failureCount=0`、`lastError=null`。运行环境时间记录为 `2026-10-13 14:47:28`；本条标题日期按会话时区记录。
+- 2026-11-02 再次复现同类问题后，改用依赖完整的 `desktop/release/win-unpacked/Dorm Electricity Monitor.exe`，并将开机自启路径同步到该稳定目录；验证自动查询成功，空调余额 `17.42` 元，`failureCount=0`、`lastError=null`。
+
 ## 0.2.0 - 2026-09-07
 
 ### 新增

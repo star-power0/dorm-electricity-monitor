@@ -19,6 +19,50 @@ def level_for_balance(balance: float, warning: float, critical: float) -> str:
     return "normal"
 
 
+# Reading validation: the upstream occasionally serves stale or cross-record
+# cache data (2026-11-03: 9.89 -> fake 20.27 for 3 checks -> 8.84), which used
+# to trigger a false recovery mail and advance the rotation cursor. Readings
+# that fail these checks are rejected before they touch alerts or state.
+STALE_COLLECTION_MINUTES = 60
+PRICE_RATIO_TOLERANCE = 0.10
+
+
+def parse_collect_time(text: str) -> datetime | None:
+    try:
+        return datetime.strptime(str(text).strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def reading_issues(previous: dict | None, reading: MeterReading, now: datetime) -> list[str]:
+    """Return reasons to ignore this reading; an empty list means it is trustworthy."""
+    issues: list[str] = []
+    collected = parse_collect_time(reading.collected_at)
+    prev_collected = None
+    if previous and previous.get("collectedAt"):
+        prev_collected = parse_collect_time(str(previous["collectedAt"]))
+    if collected is not None:
+        lag_minutes = (now - collected).total_seconds() / 60
+        if lag_minutes > STALE_COLLECTION_MINUTES:
+            issues.append(f"采集时间滞后 {int(lag_minutes)} 分钟")
+        if prev_collected is not None and collected < prev_collected:
+            issues.append("采集时间早于上一次有效读数（疑似旧缓存）")
+    if previous:
+        prev_room = str(previous.get("roomLabel") or "")
+        if prev_room and reading.room_label != prev_room:
+            issues.append(f"房间信息变化（{reading.room_label}）")
+        prev_balance = float(previous.get("balance") or 0)
+        prev_energy = float(previous.get("energy") or 0)
+        if prev_balance >= 1 and prev_energy >= 1 and reading.balance >= 1 and reading.energy >= 1:
+            prev_price = prev_balance / prev_energy
+            price = reading.balance / reading.energy
+            if abs(price - prev_price) / prev_price > PRICE_RATIO_TOLERANCE:
+                issues.append(f"金额电量比异常（{price:.3f} vs {prev_price:.3f} 元/度）")
+    if reading.balance >= 1 and reading.energy <= 0:
+        issues.append("有余额但电量为 0")
+    return issues
+
+
 def rotation_state_for(state: dict, meter_key: str) -> dict:
     rotation_state = state.setdefault("rotationState", {})
     current = rotation_state.get(meter_key)
@@ -65,20 +109,56 @@ class MonitorEngine:
             return state
         try:
             readings = self.client.get_all()
-            state["lastSuccessAt"] = now_text()
-            state["lastError"] = None
-            state["failureCount"] = 0
             state.setdefault("meters", {})
             state.setdefault("alerts", {})
 
+            # Reject implausible readings before they can touch alerts, state
+            # or the rotation cursor; only accepted readings drive any of it.
+            accepted: list[MeterReading] = []
+            rejected: list[str] = []
             for reading in readings:
+                issues = reading_issues(
+                    state["meters"].get(str(reading.type)), reading, datetime.now()
+                )
+                if issues:
+                    rejected.append(
+                        f"{reading.name} {reading.balance:.2f} 元（{'；'.join(issues)}）"
+                    )
+                    continue
+                accepted.append(reading)
                 self._store_reading(state, reading)
                 note = self._handle_alert(state, reading)
                 if note:
                     notifications_sent.append(note)
 
-            self._handle_daily_heartbeat(state, readings)
-            self._append_log(state, self._build_success_log(readings, notifications_sent))
+            if accepted:
+                state["lastSuccessAt"] = now_text()
+                state["lastError"] = None
+                state["failureCount"] = 0
+                self._handle_daily_heartbeat(state, accepted)
+                self._append_log(state, self._build_success_log(accepted, notifications_sent))
+                if rejected:
+                    self._append_log(
+                        state, f"{now_text()} 读数存疑已忽略：{'；'.join(rejected)}"
+                    )
+            else:
+                # No usable data this round: treat it as a failed check so a
+                # persistently bad feed still raises the failure notification.
+                state["failureCount"] = int(state.get("failureCount") or 0) + 1
+                state["lastError"] = "读数存疑：" + ("；".join(rejected) or "未返回任何读数")
+                self._append_log(state, f"{now_text()} 查询失败：{state['lastError']}")
+                if state["failureCount"] == 3:
+                    self.notifier.send_template(
+                        "failure",
+                        build_template_variables(
+                            self.config,
+                            {
+                                "failureCount": state["failureCount"],
+                                "error": state["lastError"],
+                                "time": now_text(),
+                            },
+                        ),
+                    )
         except Exception as exc:
             state["failureCount"] = int(state.get("failureCount") or 0) + 1
             state["lastError"] = f"{exc}\n{traceback.format_exc(limit=3)}"
@@ -131,20 +211,37 @@ class MonitorEngine:
         should_notify = False
         action_text = None
         repeat_count = 1
+        pending_recovery = bool(previous.get("pendingRecovery"))
+        stored_level = level
         current_cursor = int(rotation.get("cursor", 0) or 0)
         active_assignee = int(rotation.get("activeAssignee", current_cursor) or 0)
         next_assignee = rotation_member_for(self.config, current_cursor + 1)
 
         if level == "normal":
-            if previous_level != "normal" and self.config.notify_on_recovery:
-                should_notify = True
-                action_text = f"{reading.name} 已恢复正常，发送恢复提醒"
-            repeat_count = 0
-            if rotation.get("armed"):
-                rotation["armed"] = False
-                rotation["cursor"] = current_cursor + 1
-                rotation["activeAssignee"] = rotation["cursor"]
+            if pending_recovery:
+                # Second consecutive good reading: the recovery is real, now
+                # send the mail and advance the rotation cursor.
+                pending_recovery = False
+                repeat_count = 0
+                if rotation.get("armed"):
+                    rotation["armed"] = False
+                    rotation["cursor"] = current_cursor + 1
+                    rotation["activeAssignee"] = rotation["cursor"]
+                if self.config.notify_on_recovery:
+                    should_notify = True
+                    action_text = f"{reading.name} 已恢复正常，发送恢复提醒"
+            elif previous_level != "normal":
+                # First good reading after an alert: hold the recovery until
+                # the next check confirms it, so a single anomalous reading
+                # cannot fake a payment or skip a roommate's turn.
+                pending_recovery = True
+                repeat_count = previous_count
+                stored_level = previous_level
+                action_text = f"{reading.name} 余额回升至 {reading.balance:.2f} 元，待下轮读数确认"
+            else:
+                repeat_count = 0
         else:
+            pending_recovery = False  # bounced back before confirmation
             if not rotation.get("armed"):
                 rotation["armed"] = True
                 rotation["activeAssignee"] = current_cursor
@@ -180,10 +277,11 @@ class MonitorEngine:
             self.notifier.send_template(template_key, payload)
 
         state["alerts"][key] = {
-            "level": level,
+            "level": stored_level,
             "lastSeenAt": now_text(),
             "repeatCount": repeat_count,
             "lastNotifiedAt": now_text() if should_notify else previous.get("lastNotifiedAt"),
+            "pendingRecovery": pending_recovery,
         }
         return action_text
 
